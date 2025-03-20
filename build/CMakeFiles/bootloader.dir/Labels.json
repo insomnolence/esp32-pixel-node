@@ -1,0 +1,43 @@
+{
+	"sources" : 
+	[
+		{
+			"file" : "/mnt/devstuff/Development/Projects/ESP32/pixel_esp32/build/CMakeFiles/bootloader"
+		},
+		{
+			"file" : "/mnt/devstuff/Development/Projects/ESP32/pixel_esp32/build/CMakeFiles/bootloader.rule"
+		},
+		{
+			"file" : "/mnt/devstuff/Development/Projects/ESP32/pixel_esp32/build/CMakeFiles/bootloader-complete.rule"
+		},
+		{
+			"file" : "/mnt/devstuff/Development/Projects/ESP32/pixel_esp32/build/bootloader-prefix/src/bootloader-stamp/bootloader-build.rule"
+		},
+		{
+			"file" : "/mnt/devstuff/Development/Projects/ESP32/pixel_esp32/build/bootloader-prefix/src/bootloader-stamp/bootloader-configure.rule"
+		},
+		{
+			"file" : "/mnt/devstuff/Development/Projects/ESP32/pixel_esp32/build/bootloader-prefix/src/bootloader-stamp/bootloader-download.rule"
+		},
+		{
+			"file" : "/mnt/devstuff/Development/Projects/ESP32/pixel_esp32/build/bootloader-prefix/src/bootloader-stamp/bootloader-install.rule"
+		},
+		{
+			"file" : "/mnt/devstuff/Development/Projects/ESP32/pixel_esp32/build/bootloader-prefix/src/bootloader-stamp/bootloader-mkdir.rule"
+		},
+		{
+			"file" : "/mnt/devstuff/Development/Projects/ESP32/pixel_esp32/build/bootloader-prefix/src/bootloader-stamp/bootloader-patch.rule"
+		},
+		{
+			"file" : "/mnt/devstuff/Development/Projects/ESP32/pixel_esp32/build/bootloader-prefix/src/bootloader-stamp/bootloader-update.rule"
+		}
+	],
+	"target" : 
+	{
+		"labels" : 
+		[
+			"bootloader"
+		],
+		"name" : "bootloader"
+	}
+}

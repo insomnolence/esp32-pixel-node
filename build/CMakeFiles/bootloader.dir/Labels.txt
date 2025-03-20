@@ -1,0 +1,13 @@
+# Target labels
+ bootloader
+# Source files and their labels
+/mnt/devstuff/Development/Projects/ESP32/pixel_esp32/build/CMakeFiles/bootloader
+/mnt/devstuff/Development/Projects/ESP32/pixel_esp32/build/CMakeFiles/bootloader.rule
+/mnt/devstuff/Development/Projects/ESP32/pixel_esp32/build/CMakeFiles/bootloader-complete.rule
+/mnt/devstuff/Development/Projects/ESP32/pixel_esp32/build/bootloader-prefix/src/bootloader-stamp/bootloader-build.rule
+/mnt/devstuff/Development/Projects/ESP32/pixel_esp32/build/bootloader-prefix/src/bootloader-stamp/bootloader-configure.rule
+/mnt/devstuff/Development/Projects/ESP32/pixel_esp32/build/bootloader-prefix/src/bootloader-stamp/bootloader-download.rule
+/mnt/devstuff/Development/Projects/ESP32/pixel_esp32/build/bootloader-prefix/src/bootloader-stamp/bootloader-install.rule
+/mnt/devstuff/Development/Projects/ESP32/pixel_esp32/build/bootloader-prefix/src/bootloader-stamp/bootloader-mkdir.rule
+/mnt/devstuff/Development/Projects/ESP32/pixel_esp32/build/bootloader-prefix/src/bootloader-stamp/bootloader-patch.rule
+/mnt/devstuff/Development/Projects/ESP32/pixel_esp32/build/bootloader-prefix/src/bootloader-stamp/bootloader-update.rule
