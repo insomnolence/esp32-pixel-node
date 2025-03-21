@@ -1,6 +1,7 @@
 #ifndef GAP_GATT_DATA_H_
 #define GAP_GATT_DATA_H_
 
+#include "esp_gap_ble_api.h"
 #include <stdint.h>
 
 #define ADV_CONFIG_FLAG (1 << 0)

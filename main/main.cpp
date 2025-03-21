@@ -1,6 +1,6 @@
 // main.cpp
 #include "ble_gatt_server.h"
-#include "gap_handler.h"
+#include "ble_gap_handler.h"
 #include "gatt_profile.h"
 #include "nvs_manager.h"
 
@@ -10,44 +10,61 @@
 
 #include "esp_log.h"
 
+#include <functional>
+
 #define GATTS_TAG "GATTS_DEMO"
 #define TEST_DEVICE_NAME "GATTS_DEMO"
 
 
 extern "C" void app_main(void) {
     // Initialize NVS
-    if (nvs_manager_init() != ESP_OK) {
+    NvsManager nvsManager;
+    if (nvsManager.init() != ESP_OK) {
         ESP_LOGE(GATTS_TAG, "Failed to initialize NVS");
         return;
     }
 
     //Initialize the GATT profile.
-    gl_profile_tab[PROFILE_A_APP_ID].gatts_cb = gatts_profile_a_event_handler;
-    gl_profile_tab[PROFILE_A_APP_ID].gatts_if = ESP_GATT_IF_NONE;
+    //gl_profile_tab[PROFILE_A_APP_ID].gatts_cb = gatts_profile_a_event_handler;
+    //gl_profile_tab[PROFILE_A_APP_ID].gatts_if = ESP_GATT_IF_NONE;
 
-    // Initialize and enable the BT controller
-    if (ble_controller_init_and_enable() != ESP_OK) {
-        ESP_LOGE(GATTS_TAG, "Failed to initialize BT controller");
+
+    // Create and initialize the BLEGattServer object
+    BLEGattServer bleGattServer;
+    if (bleGattServer.init() != ESP_OK) {
+        ESP_LOGE(GATTS_TAG, "Failed to initialize BLE GATT Server");
         return;
     }
 
-    // Initialize and enable Bluedroid
-    if (ble_bluedroid_init_and_enable() != ESP_OK) {
-        ESP_LOGE(GATTS_TAG, "Failed to initialize Bluedroid");
-        return;
-    }
+    GattProfile gattProfile;
+    // Set the profile event handler
+    bleGattServer.setProfileEventHandler(std::bind(&GattProfile::gattsProfileAEventHandler, &gattProfile, 
+       std::placeholders::_1, std::placeholders::_2, std::placeholders::_3), PROFILE_A_APP_ID); // Change here
 
     // Register GATT and GAP callbacks
-    if (register_gatt_callbacks() != ESP_OK || register_gap_callbacks() != ESP_OK) {
+    BLEGapHandler gapHandler;
+    if (bleGattServer.registerGattCallbacks() != ESP_OK || gapHandler.registerGapCallbacks() != ESP_OK) {
         ESP_LOGE(GATTS_TAG, "Failed to register GATT or GAP callbacks");
         return;
     }
 
     // Register GATT application
-    if (register_gatt_app(PROFILE_A_APP_ID) != ESP_OK) {
+    if (bleGattServer.registerGattApp(PROFILE_A_APP_ID) != ESP_OK) {
         ESP_LOGE(GATTS_TAG, "Failed to register GATT application");
         return;
     }
+
+
+
+
+    // Set device name
+    if (bleGattServer.setDeviceName(TEST_DEVICE_NAME) != ESP_OK) {
+        ESP_LOGE(GATTS_TAG, "Failed to set device name");
+        return;
+    }
+
+    // Start advertising
+    gattProfile.startAdvertising();
 
     ESP_LOGI(GATTS_TAG, "Application initialized");
 

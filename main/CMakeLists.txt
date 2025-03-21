@@ -1,2 +1,2 @@
-idf_component_register(SRCS "gatts_event_handler.cpp" "ble_gatt_server.cpp" "nvs_manager.cpp" "gatt_profile.cpp" "gap_handler.cpp" "main.cpp"
+idf_component_register(SRCS "ble_gatt_server.cpp" "nvs_manager.cpp" "gatt_profile.cpp" "ble_gap_handler.cpp" "packet.cpp" "main.cpp"
                     INCLUDE_DIRS ".")
