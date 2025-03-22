@@ -1,8 +1,8 @@
-// main.cpp
 #include "ble_gatt_server.h"
 #include "ble_gap_handler.h"
 #include "gatt_profile.h"
 #include "nvs_manager.h"
+#include "pixel_packet_profile.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -11,6 +11,7 @@
 #include "esp_log.h"
 
 #include <functional>
+#include <memory>
 
 #define GATTS_TAG "GATTS_DEMO"
 #define TEST_DEVICE_NAME "GATTS_DEMO"
@@ -24,11 +25,6 @@ extern "C" void app_main(void) {
         return;
     }
 
-    //Initialize the GATT profile.
-    //gl_profile_tab[PROFILE_A_APP_ID].gatts_cb = gatts_profile_a_event_handler;
-    //gl_profile_tab[PROFILE_A_APP_ID].gatts_if = ESP_GATT_IF_NONE;
-
-
     // Create and initialize the BLEGattServer object
     BLEGattServer bleGattServer;
     if (bleGattServer.init() != ESP_OK) {
@@ -36,11 +32,24 @@ extern "C" void app_main(void) {
         return;
     }
 
-    GattProfile gattProfile;
-    // Set the profile event handler
-    bleGattServer.setProfileEventHandler(std::bind(&GattProfile::gattsProfileAEventHandler, &gattProfile, 
-       std::placeholders::_1, std::placeholders::_2, std::placeholders::_3), PROFILE_A_APP_ID); // Change here
+    // Set device name
+    if (bleGattServer.setDeviceName(TEST_DEVICE_NAME) != ESP_OK) {
+        ESP_LOGE(GATTS_TAG, "Failed to set device name");
+        return;
+    }
 
+    // Create Gatt Profiles here. Do this for each profile (In our case only PixelPacketProile for now)
+    // Use appId to define these instances for underlying bluetooth calls. Increment appId for each
+    // profile created.
+    // TBD - Make the appId a Gatt Profile specific variable so any new profiles auto increment/set the appId
+    // for underlying bluetooth calls.
+    uint16_t appId = 0;
+    const std::string service_uuid_str = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+    const std::string characteristic_uuid_str = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
+    std::shared_ptr<PixelPacketProfile> pixel_packet_profile = std::make_shared<PixelPacketProfile>(appId, service_uuid_str, characteristic_uuid_str);
+    pixel_packet_profile->configureAdvertisingData();
+    bleGattServer.addProfile(pixel_packet_profile);
+    
     // Register GATT and GAP callbacks
     BLEGapHandler gapHandler;
     if (bleGattServer.registerGattCallbacks() != ESP_OK || gapHandler.registerGapCallbacks() != ESP_OK) {
@@ -48,27 +57,10 @@ extern "C" void app_main(void) {
         return;
     }
 
-    // Register GATT application
-    if (bleGattServer.registerGattApp(PROFILE_A_APP_ID) != ESP_OK) {
-        ESP_LOGE(GATTS_TAG, "Failed to register GATT application");
-        return;
-    }
-
-
-
-
-    // Set device name
-    if (bleGattServer.setDeviceName(TEST_DEVICE_NAME) != ESP_OK) {
-        ESP_LOGE(GATTS_TAG, "Failed to set device name");
-        return;
-    }
-
-    // Start advertising
-    gattProfile.startAdvertising();
+    bleGattServer.startAdvertising();
 
     ESP_LOGI(GATTS_TAG, "Application initialized");
 
-    // Add an infinite loop here
     while (true) {
         // Small delay here to prevent a watchdog timeout
         // and allow other tasks to run.

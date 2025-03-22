@@ -12,7 +12,9 @@
   //"idf.portWin": "COM3",
   "idf.adapterTargetName": "esp32",
   "files.associations": {
-    "inttypes.h": "c"
+    "inttypes.h": "c",
+    "cstring": "cpp",
+    "*.inc": "cpp"
   },
   "idf.openOcdConfigs": [
     "interface/ftdi/esp32_devkitj_v1.cfg",

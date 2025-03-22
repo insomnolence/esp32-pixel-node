@@ -20,39 +20,14 @@ esp_err_t BLEGapHandler::registerGapCallbacks() {
     return ESP_OK;
 }
 
-void BLEGapHandler::startAdvertising() {
-    if (esp_ble_gap_start_advertising(&adv_params) != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to start advertising");
-    }
-    else {
-        ESP_LOGI(TAG, "Advertising started");
-    }
-}
-
 void BLEGapHandler::gapEventHandler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param) {
     ESP_LOGI(TAG, "GAP event %d", event);
     switch (event) {
         case ESP_GAP_BLE_ADV_DATA_SET_COMPLETE_EVT:
-            adv_config_done &= (~ADV_CONFIG_FLAG);
-            if (adv_config_done == 0) {
-                if (esp_ble_gap_start_advertising(&adv_params) != ESP_OK) {
-                    ESP_LOGE(TAG, "Failed to start advertising");
-                }
-                else {
-                    ESP_LOGI(TAG, "Advertising started");
-                }
-            }
+            ESP_LOGI(TAG, "Advertising data set complete");
             break;
         case ESP_GAP_BLE_SCAN_RSP_DATA_SET_COMPLETE_EVT:
-            adv_config_done &= (~SCAN_RSP_CONFIG_FLAG);
-            if (adv_config_done == 0) {
-                if (esp_ble_gap_start_advertising(&adv_params) != ESP_OK) {
-                    ESP_LOGE(TAG, "Failed to start advertising");
-                }
-                else {
-                    ESP_LOGI(TAG, "Advertising started");
-                }
-            }
+            ESP_LOGI(TAG, "Scan response data set complete");
             break;
         case ESP_GAP_BLE_ADV_START_COMPLETE_EVT:
             if (param->adv_start_cmpl.status != ESP_BT_STATUS_SUCCESS) {
@@ -64,7 +39,6 @@ void BLEGapHandler::gapEventHandler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb
                 ESP_LOGE(TAG, "Advertising stop failed");
             } else {
                 ESP_LOGI(TAG, "Stop adv successfully");
-                adv_config_done = 0;
             }
             break;
         case ESP_GAP_BLE_UPDATE_CONN_PARAMS_EVT:
