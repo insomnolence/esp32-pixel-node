@@ -153,6 +153,9 @@ void BLEGattServer::addProfile(std::shared_ptr<GattProfile> profile) {
     ESP_LOGI(BLEGattServer::TAG, "Adding profile: %d", profile->getAppId());
     profile_list.push_back(profile);
 
+    // This order matters. Configure Advertising Data MUSTT happen before resgisterGattApp.
+    profile->configureAdvertisingData();
+
     if (registerGattApp(profile->getAppId()) != ESP_OK) {
         ESP_LOGE(BLEGattServer::TAG, "Failed to register GATT application for PixelPacketProfile");
     }

@@ -4,8 +4,8 @@
 #include "ble_gap_handler.h"
 #include "string.h"
 
-PixelPacketProfile::PixelPacketProfile(uint16_t app_id, const std::string& service_uuid_str, const std::string& characteristic_uuid_str)
-    : GattProfile(app_id, service_uuid_str, characteristic_uuid_str) {
+PixelPacketProfile::PixelPacketProfile(const std::string& service_uuid_str, const std::string& characteristic_uuid_str)
+    : GattProfile(service_uuid_str, characteristic_uuid_str) {
     // PixelPacketProfile specific constructor actions
 }
 

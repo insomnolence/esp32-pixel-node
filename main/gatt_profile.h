@@ -10,7 +10,7 @@
 
 class GattProfile {
 public:
-    GattProfile(const uint16_t _app_id, const std::string& service_uuid_str, const std::string& characteristic_uuid_str);
+    GattProfile(const std::string& service_uuid_str, const std::string& characteristic_uuid_str);
     virtual ~GattProfile();
 
     // Pure virtual function to be implemented by subclasses
@@ -60,6 +60,10 @@ protected:
     virtual void handleCloseEvent(esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
     virtual void handleListenEvent(esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
     virtual void handleCongestEvent(esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
+
+private:
+    static uint16_t nextAppId;
+
 };
 
 #endif // GATT_PROFILE_H_
