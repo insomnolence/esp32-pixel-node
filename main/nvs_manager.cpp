@@ -7,11 +7,9 @@ const char* NvsManager::TAG = "NvsManager";
 NvsManager nvsManager;
 
 NvsManager::NvsManager() {
-    // Constructor
 }
 
 NvsManager::~NvsManager() {
-    // Destructor
 }
 
 esp_err_t NvsManager::init() {

@@ -13,7 +13,6 @@ uint16_t GattProfile::nextAppId = 0;
 
 GattProfile::GattProfile(const std::string &service_uuid_str, const std::string &characteristic_uuid_str) : service_handle(0), a_property(0), app_id(nextAppId++)
 {
-    // Constructor
     my_service_uuid = convertStringToUuid(service_uuid_str.c_str());
     my_characteristic_uuid = convertStringToUuid(characteristic_uuid_str.c_str());
 
@@ -52,7 +51,6 @@ GattProfile::GattProfile(const std::string &service_uuid_str, const std::string 
 
 GattProfile::~GattProfile()
 {
-    // Destructor
 }
 
 void GattProfile::setServiceHandle(uint16_t service_handle)

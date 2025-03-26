@@ -8,8 +8,6 @@ const char* BLEGattServer::TAG = "BLEGattServer";
 BLEGattServer* BLEGattServer::instance = nullptr;
 
 BLEGattServer::BLEGattServer() {
-    // Constructor
-
     adv_params = {
         .adv_int_min = 0x20,
         .adv_int_max = 0x40,
@@ -23,7 +21,6 @@ BLEGattServer::BLEGattServer() {
 }
 
 BLEGattServer::~BLEGattServer() {
-    // Destructor (if needed for cleanup)
     instance = nullptr;
 }
 

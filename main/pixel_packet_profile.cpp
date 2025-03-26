@@ -6,11 +6,9 @@
 
 PixelPacketProfile::PixelPacketProfile(const std::string& service_uuid_str, const std::string& characteristic_uuid_str)
     : GattProfile(service_uuid_str, characteristic_uuid_str) {
-    // PixelPacketProfile specific constructor actions
 }
 
 PixelPacketProfile::~PixelPacketProfile() {
-    // PixelPacketProfile specific destructor actions
 }
 
 void PixelPacketProfile::gattsEventHandler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) {

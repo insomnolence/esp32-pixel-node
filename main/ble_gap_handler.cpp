@@ -4,11 +4,9 @@
 const char* BLEGapHandler::TAG = "BLEGapHandler";
 
 BLEGapHandler::BLEGapHandler() {
-    // Constructor
 }
 
 BLEGapHandler::~BLEGapHandler() {
-    // Destructor
 }
 
 esp_err_t BLEGapHandler::registerGapCallbacks() {

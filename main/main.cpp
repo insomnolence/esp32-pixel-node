@@ -39,14 +39,9 @@ extern "C" void app_main(void) {
     }
 
     // Create Gatt Profiles here. Do this for each profile (In our case only PixelPacketProile for now)
-    // Use appId to define these instances for underlying bluetooth calls. Increment appId for each
-    // profile created.
-    // TBD - Make the appId a Gatt Profile specific variable so any new profiles auto increment/set the appId
-    // for underlying bluetooth calls.
     const std::string service_uuid_str = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
     const std::string characteristic_uuid_str = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
     std::shared_ptr<PixelPacketProfile> pixel_packet_profile = std::make_shared<PixelPacketProfile>(service_uuid_str, characteristic_uuid_str);
-    //pixel_packet_profile->configureAdvertisingData();
     bleGattServer.addProfile(pixel_packet_profile);
     
     // Register GATT and GAP callbacks
