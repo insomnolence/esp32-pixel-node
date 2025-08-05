@@ -9,4 +9,11 @@ idf_component_register(SRCS
     "packet/led_packet_processor.cpp"
     "packet/packet.cpp"
     "system/nvs_manager.cpp"
+    "led/led_strip.cpp"
+    "led/led_strip_encoder.cpp"
+    "led/pattern.cpp"
+    "led/gradient.cpp"
+    "led/player.cpp"
+    "led/sequence.cpp"
+    "led/led_controller.cpp"
     INCLUDE_DIRS "." "bluetooth" "mesh" "packet" "led" "system")

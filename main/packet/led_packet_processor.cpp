@@ -11,11 +11,13 @@ LedPacketProcessor::~LedPacketProcessor() {
 }
 
 bool LedPacketProcessor::processPacket(const GenericPacket& packet) {
+    ESP_LOGI(TAG, "🔥 LedPacketProcessor::processPacket called");
     if (!packet.isValid()) {
-        ESP_LOGE(TAG, "Cannot process invalid packet");
+        ESP_LOGE(TAG, "🔥 Cannot process invalid packet");
         return false;
     }
     
+    ESP_LOGI(TAG, "🔥 Processing LED packet (%zu bytes)", packet.getLength());
     PacketFormat format = detectPacketFormat(packet);
     
     switch (format) {

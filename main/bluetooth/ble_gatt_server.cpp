@@ -90,20 +90,24 @@ esp_err_t BLEGattServer::init() {
 }
 
 esp_err_t BLEGattServer::registerGattCallbacks() {
+    ESP_LOGI(TAG, "🔥 Registering GATT callbacks");
     esp_err_t ret = esp_ble_gatts_register_callback(BLEGattServer::gattsEventHandler);
     if (ret) {
-        ESP_LOGE(TAG, "gatts register error, error code = %x", ret);
+        ESP_LOGE(TAG, "🔥 gatts register error, error code = %x", ret);
         return ret;
     }
+    ESP_LOGI(TAG, "🔥 GATT callbacks registered successfully");
     return ESP_OK;
 }
 
 esp_err_t BLEGattServer::registerGattApp(uint16_t app_id) {
+    ESP_LOGI(TAG, "🔥 Registering GATT app with ID: %d", app_id);
     esp_err_t ret = esp_ble_gatts_app_register(app_id);
     if (ret) {
-        ESP_LOGE(TAG, "gatts app register error, error code = %x", ret);
+        ESP_LOGE(TAG, "🔥 gatts app register error, error code = %x", ret);
         return ret;
     }
+    ESP_LOGI(TAG, "🔥 GATT app registration initiated successfully");
     return ESP_OK;
 }
 

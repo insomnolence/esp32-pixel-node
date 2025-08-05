@@ -131,6 +131,7 @@ private:
     void forwardPacket(const ESPNowMeshPacket& packet);
     esp_err_t sendMeshPacket(const ESPNowMeshPacket& packet);
     esp_err_t sendMeshPacketWithRetry(const ESPNowMeshPacket& packet, int max_retries);
+    esp_err_t sendMeshPacketHighPriority(const ESPNowMeshPacket& packet); // Fast path for time-sensitive data
     
     // Packet creation
     ESPNowMeshPacket createMeshPacket(MeshPacketType type, const GenericPacket& payload, uint8_t ttl = ESPNOW_MESH_DEFAULT_TTL);

@@ -219,10 +219,10 @@ esp_err_t ESPNowMeshCoordinator::sendLEDPattern(const GenericPacket& pattern) {
     // Create mesh packet for LED pattern (high priority, full TTL)
     ESPNowMeshPacket mesh_packet = createMeshPacket(MeshPacketType::LED_PATTERN, pattern, ESPNOW_MESH_DEFAULT_TTL);
     
-    ESP_LOGI(TAG, "Sending LED pattern (ID: 0x%08lX, size: %zu bytes)", 
+    ESP_LOGI(TAG, "Sending LED pattern HIGH PRIORITY (ID: 0x%08lX, size: %zu bytes)", 
              mesh_packet.packet_id, pattern.getLength());
     
-    return sendMeshPacket(mesh_packet);
+    return sendMeshPacketHighPriority(mesh_packet);
 }
 
 ESPNowMeshPacket ESPNowMeshCoordinator::createMeshPacket(MeshPacketType type, const GenericPacket& payload, uint8_t ttl) {
@@ -279,6 +279,37 @@ esp_err_t ESPNowMeshCoordinator::sendMeshPacketWithRetry(const ESPNowMeshPacket&
     }
     
     ESP_LOGE(TAG, "Failed to send mesh packet after %d attempts", max_retries);
+    return ESP_FAIL;
+}
+
+esp_err_t ESPNowMeshCoordinator::sendMeshPacketHighPriority(const ESPNowMeshPacket& packet) {
+    uint8_t broadcast_mac[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+    size_t packet_size = sizeof(ESPNowMeshPacket) - sizeof(packet.data) + packet.data_len;
+    
+    // HIGH PRIORITY: Send immediately without backoff, single attempt
+    esp_err_t result = esp_now_send(broadcast_mac, (uint8_t*)&packet, packet_size);
+    
+    if (result == ESP_OK) {
+        network_stats.packets_sent++;
+        ESP_LOGD(TAG, "High priority packet sent successfully");
+        return ESP_OK;
+    }
+    
+    network_stats.send_failures++;
+    ESP_LOGW(TAG, "High priority send failed: %s", esp_err_to_name(result));
+    
+    // Single retry with minimal delay for critical LED sync
+    vTaskDelay(pdMS_TO_TICKS(2)); // 2ms delay only
+    result = esp_now_send(broadcast_mac, (uint8_t*)&packet, packet_size);
+    
+    if (result == ESP_OK) {
+        network_stats.packets_sent++;
+        ESP_LOGD(TAG, "High priority packet sent on retry");
+        return ESP_OK;
+    }
+    
+    network_stats.send_failures++;
+    ESP_LOGE(TAG, "High priority send failed on retry: %s", esp_err_to_name(result));
     return ESP_FAIL;
 }
 

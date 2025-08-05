@@ -39,15 +39,23 @@ void PixelPacketProfile::gattsEventHandler(esp_gatts_cb_event_t event, esp_gatt_
             handleAddCharDescrEvent(gatts_if, param);
             break;
         case ESP_GATTS_CONNECT_EVT:
+            ESP_LOGI(TAG, "🔥 BLE CLIENT CONNECTED!");
             handleConnectEvent(gatts_if, param);
             if (ble_connection_callback) {
+                ESP_LOGI(TAG, "🔥 Calling BLE connection callback (connected=true)");
                 ble_connection_callback(true);
+            } else {
+                ESP_LOGW(TAG, "🔥 No BLE connection callback set!");
             }
             break;
         case ESP_GATTS_DISCONNECT_EVT:
+            ESP_LOGI(TAG, "🔥 BLE CLIENT DISCONNECTED!");
             handleDisconnectEvent(gatts_if, param);
             if (ble_connection_callback) {
+                ESP_LOGI(TAG, "🔥 Calling BLE connection callback (connected=false)");
                 ble_connection_callback(false);
+            } else {
+                ESP_LOGW(TAG, "🔥 No BLE connection callback set!");
             }
             break;
         case ESP_GATTS_START_EVT:
@@ -95,21 +103,35 @@ void PixelPacketProfile::handleReadEvent(esp_gatt_if_t gatts_if, esp_ble_gatts_c
 }
 
 void PixelPacketProfile::handleWriteEvent(esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) {
-    ESP_LOGI(TAG, "PixelPacketProfile GATT_WRITE_EVT, conn_id %d, trans_id %" PRIu32 ", handle %d", param->write.conn_id, param->write.trans_id, param->write.handle);
+    ESP_LOGI(TAG, "🔥 PixelPacketProfile GATT_WRITE_EVT, conn_id %d, trans_id %" PRIu32 ", handle %d", param->write.conn_id, param->write.trans_id, param->write.handle);
+    ESP_LOGI(TAG, "🔥 Write details: is_prep=%d, len=%d, need_rsp=%d", param->write.is_prep, param->write.len, param->write.need_rsp);
+    
     if (!param->write.is_prep && param->write.len > 0) {
+        ESP_LOGI(TAG, "🔥 Processing write data...");
+        
         // Create generic packet from BLE data (any format)
         GenericPacket received_packet(param->write.value, param->write.len);
         
-        ESP_LOGI(TAG, "Received BLE packet: %zu bytes", received_packet.getLength());
+        ESP_LOGI(TAG, "🔥 Received BLE packet: %zu bytes, valid=%d", received_packet.getLength(), received_packet.isValid());
         
         // Log packet contents in hex for debugging
         const uint8_t* data = received_packet.getData();
         ESP_LOG_BUFFER_HEX(TAG, data, received_packet.getLength());
         
         // Forward generic packet to mesh network if callback is set
-        if (packet_forward_callback && received_packet.isValid()) {
-            packet_forward_callback(received_packet);
+        if (packet_forward_callback) {
+            ESP_LOGI(TAG, "🔥 Forwarding packet to mesh network callback");
+            if (received_packet.isValid()) {
+                packet_forward_callback(received_packet);
+                ESP_LOGI(TAG, "🔥 Packet forwarded successfully");
+            } else {
+                ESP_LOGW(TAG, "🔥 Packet not valid, not forwarding");
+            }
+        } else {
+            ESP_LOGW(TAG, "🔥 No packet forward callback set!");
         }
+    } else {
+        ESP_LOGI(TAG, "🔥 Skipping write: is_prep=%d, len=%d", param->write.is_prep, param->write.len);
     }
 
     if (getDescrHandle() == param->write.handle && param->write.len == 2) {

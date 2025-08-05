@@ -6,6 +6,7 @@
 #include "mesh/espnow_mesh_coordinator.h"
 #include "packet/led_packet_processor.h"
 #include "packet/generic_packet.h"
+#include "led/led_controller.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -48,18 +49,37 @@ extern "C" void app_main(void) {
         return;
     }
 
+    // Register GATT callbacks BEFORE adding profiles
+    BLEGapHandler gapHandler;
+    if (bleGattServer.registerGattCallbacks() != ESP_OK || gapHandler.registerGapCallbacks() != ESP_OK) {
+        ESP_LOGE(MAIN_TAG, "❌ Failed to register BLE GATT/GAP callbacks");
+        return;
+    }
+
     // Create Gatt Profiles here. Do this for each profile (In our case only PixelPacketProile for now)
     const std::string service_uuid_str = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
     const std::string characteristic_uuid_str = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
     std::shared_ptr<PixelPacketProfile> pixel_packet_profile = std::make_shared<PixelPacketProfile>(service_uuid_str, characteristic_uuid_str);
     bleGattServer.addProfile(pixel_packet_profile);
     
+    // Create LED controller
+    LEDController ledController;
+    if (ledController.begin() != ESP_OK) {
+        ESP_LOGE(MAIN_TAG, "❌ Failed to initialize LED controller");
+        return;
+    }
+    
     // Create LED packet processor
     LedPacketProcessor ledProcessor;
-    ledProcessor.setLedControlCallback([](const GenericPacket& packet, const char* format_info) {
-        ESP_LOGI(MAIN_TAG, "🌈 LED Pattern Applied: %s (%zu bytes)", format_info, packet.getLength());
-        // TODO: Add actual LED strip control here
-        // This is where you'll add your LED strip driver code (WS2812, APA102, etc.)
+    ledProcessor.setLedControlCallback([&ledController](const GenericPacket& packet, const char* format_info) {
+        ESP_LOGI(MAIN_TAG, "🌈 LED Pattern Received: %s (%zu bytes)", format_info, packet.getLength());
+        
+        // Process the packet with our LED controller
+        if (ledController.processPacket(packet)) {
+            ESP_LOGI(MAIN_TAG, "✅ LED pattern applied successfully");
+        } else {
+            ESP_LOGW(MAIN_TAG, "❌ Failed to apply LED pattern");
+        }
     });
     
     // Set up mesh coordinator callbacks - now generic
@@ -95,9 +115,11 @@ extern "C" void app_main(void) {
     // Set up packet forwarding from BLE to mesh - now generic
     pixel_packet_profile->setPacketForwardCallback([&meshCoordinator, &ledProcessor](const GenericPacket& packet) {
         // Always process locally first (root node gets LED patterns too)
-        ESP_LOGI(MAIN_TAG, "Processing LED pattern from mobile phone locally");
+        ESP_LOGI(MAIN_TAG, "🔥 Processing LED pattern from mobile phone locally (%zu bytes)", packet.getLength());
         if (!ledProcessor.processPacket(packet)) {
-            ESP_LOGW(MAIN_TAG, "Failed to process LED pattern locally");
+            ESP_LOGW(MAIN_TAG, "🔥 Failed to process LED pattern locally");
+        } else {
+            ESP_LOGI(MAIN_TAG, "🔥 Successfully processed LED pattern locally");
         }
         
         // Forward to ESP-NOW mesh network if we're root
@@ -110,13 +132,6 @@ extern "C" void app_main(void) {
             ESP_LOGW(MAIN_TAG, "Received LED pattern but not root - cannot broadcast to mesh");
         }
     });
-    
-    // Register GATT and GAP callbacks
-    BLEGapHandler gapHandler;
-    if (bleGattServer.registerGattCallbacks() != ESP_OK || gapHandler.registerGapCallbacks() != ESP_OK) {
-        ESP_LOGE(MAIN_TAG, "❌ Failed to register BLE GATT/GAP callbacks");
-        return;
-    }
 
     // Start ESP-NOW mesh network
     if (meshCoordinator.start() != ESP_OK) {
@@ -130,23 +145,38 @@ extern "C" void app_main(void) {
     ESP_LOGI(MAIN_TAG, "📱 Connect via BLE to '%s' to control LED patterns", DEVICE_NAME);
 
     while (true) {
+        // Get current time for timing operations
+        uint32_t now = esp_timer_get_time() / 1000;
+        
+        // Update LED controller (must be called frequently for smooth animations)
+        ledController.update();
+        
         // Check for autonomous root election
         meshCoordinator.checkForRootElection();
         
-        // If we're autonomous root, send periodic announcements
-        if (meshCoordinator.isAutonomousRoot()) {
+        // If we're autonomous root, send periodic announcements (every 5 seconds)
+        static uint32_t lastRootAnnouncement = 0;
+        if (meshCoordinator.isAutonomousRoot() && (now - lastRootAnnouncement > 5000)) {
             meshCoordinator.sendRootAnnouncement();
+            lastRootAnnouncement = now;
         }
         
-        // Monitor system status and network health
-        const auto& stats = meshCoordinator.getNetworkStats();
+        // Monitor system status and network health every 30 seconds
+        static uint32_t lastStatusLog = 0;
+        if (now - lastStatusLog > 30000) {
+            const auto& stats = meshCoordinator.getNetworkStats();
+            
+            ESP_LOGI(MAIN_TAG, "LED Node 0x%04X - Role: %s - LED: %s", 
+                     meshCoordinator.getNodeId(), 
+                     meshCoordinator.getRoleString(),
+                     ledController.getCurrentSequenceType());
+            ESP_LOGI(MAIN_TAG, "Mesh Stats: Sent=%lu, Received=%lu, Dropped=%lu, Failures=%lu", 
+                     stats.packets_sent, stats.packets_received, stats.packets_dropped, stats.send_failures);
+            
+            lastStatusLog = now;
+        }
         
-        ESP_LOGI(MAIN_TAG, "LED Node 0x%04X - Role: %s", 
-                 meshCoordinator.getNodeId(), meshCoordinator.getRoleString());
-        ESP_LOGI(MAIN_TAG, "Mesh Stats: Sent=%lu, Received=%lu, Dropped=%lu, Failures=%lu", 
-                 stats.packets_sent, stats.packets_received, stats.packets_dropped, stats.send_failures);
-        
-        vTaskDelay(pdMS_TO_TICKS(30000)); // Status every 30 seconds
+        vTaskDelay(pdMS_TO_TICKS(10)); // 10ms delay for smooth LED updates
     }
 
 }
