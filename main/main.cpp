@@ -139,6 +139,9 @@ extern "C" void app_main(void) {
         return;
     }
 
+    // Allow BLE stack to settle before starting advertising (especially important on ESP32-C3)
+    vTaskDelay(pdMS_TO_TICKS(500));
+    
     bleGattServer.startAdvertising();
 
     ESP_LOGI(MAIN_TAG, "✅ ESP32 LED Mesh Node ready - Node ID: 0x%04X", meshCoordinator.getNodeId());
