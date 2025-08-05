@@ -9,7 +9,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
-#include "generic_packet.h"
+#include "../packet/generic_packet.h"
 #include <functional>
 #include <memory>
 #include <set>

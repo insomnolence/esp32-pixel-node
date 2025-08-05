@@ -2,7 +2,7 @@
 #define PIXEL_PACKET_PROFILE_H_
 
 #include "gatt_profile.h"
-#include "generic_packet.h"
+#include "../packet/generic_packet.h"
 #include <functional>
 
 class PixelPacketProfile : public GattProfile {
