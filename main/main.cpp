@@ -140,7 +140,8 @@ extern "C" void app_main(void) {
     }
 
     // Allow BLE stack to settle before starting advertising (especially important on ESP32-C3)
-    vTaskDelay(pdMS_TO_TICKS(500));
+    // Increased delay to reduce ESP-NOW interference with BLE connection establishment
+    vTaskDelay(pdMS_TO_TICKS(1000));
     
     bleGattServer.startAdvertising();
 
@@ -179,7 +180,7 @@ extern "C" void app_main(void) {
             lastStatusLog = now;
         }
         
-        vTaskDelay(pdMS_TO_TICKS(10)); // 10ms delay for smooth LED updates
+        vTaskDelay(pdMS_TO_TICKS(15)); // 15ms delay for smooth LED updates while reducing ESP-NOW/BLE interference
     }
 
 }

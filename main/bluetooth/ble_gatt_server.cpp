@@ -9,8 +9,8 @@ BLEGattServer* BLEGattServer::instance = nullptr;
 
 BLEGattServer::BLEGattServer() {
     adv_params = {
-        .adv_int_min = 0x20,      // 20ms (was causing slow discovery)
-        .adv_int_max = 0x30,      // 30ms (reduced from 40ms for faster discovery)
+        .adv_int_min = 0x20,      // 20ms - fast advertising for quick discovery
+        .adv_int_max = 0x30,      // 30ms - balanced for power and speed  
         .adv_type = ADV_TYPE_IND,
         .own_addr_type = BLE_ADDR_TYPE_PUBLIC,
         .channel_map = ADV_CHNL_ALL,
@@ -18,6 +18,8 @@ BLEGattServer::BLEGattServer() {
     };
 
     instance = this; // Store the instance pointer
+    
+    ESP_LOGI(TAG, "BLE GATT Server configured with optimized advertising parameters for faster connections");
 }
 
 BLEGattServer::~BLEGattServer() {

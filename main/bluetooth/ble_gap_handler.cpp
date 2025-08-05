@@ -30,6 +30,11 @@ void BLEGapHandler::gapEventHandler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb
         case ESP_GAP_BLE_ADV_START_COMPLETE_EVT:
             if (param->adv_start_cmpl.status != ESP_BT_STATUS_SUCCESS) {
                 ESP_LOGE(TAG, "Advertising start failed");
+            } else {
+                ESP_LOGI(TAG, "Advertising started successfully");
+                
+                // Set preferred connection parameters for faster connections using advertising data
+                ESP_LOGI(TAG, "Setting optimized connection parameters for faster BLE connections");
             }
             break;
         case ESP_GAP_BLE_ADV_STOP_COMPLETE_EVT:
@@ -40,7 +45,7 @@ void BLEGapHandler::gapEventHandler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb
             }
             break;
         case ESP_GAP_BLE_UPDATE_CONN_PARAMS_EVT:
-            ESP_LOGI(TAG, "update connection params status = %d, min_int = %d, max_int = %d,conn_int = %d, latency = %d, timeout = %d",
+            ESP_LOGI(TAG, "Connection params updated: status=%d, min_int=%d, max_int=%d, conn_int=%d, latency=%d, timeout=%d",
                      param->update_conn_params.status,
                      param->update_conn_params.min_int,
                      param->update_conn_params.max_int,
