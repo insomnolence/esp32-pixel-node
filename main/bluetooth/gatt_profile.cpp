@@ -38,6 +38,8 @@ GattProfile::GattProfile(const std::string &service_uuid_str, const std::string 
         .set_scan_rsp = true,
         .include_name = true,
         .include_txpower = true,
+        .min_interval = 0x0006,
+        .max_interval = 0x0010,
         .appearance = 0x00,
         .manufacturer_len = 0,
         .p_manufacturer_data = NULL,

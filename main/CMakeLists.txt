@@ -7,7 +7,6 @@ idf_component_register(SRCS
     "mesh/espnow_mesh_coordinator.cpp"
     "packet/generic_packet.cpp"
     "packet/led_packet_processor.cpp"
-    "packet/packet.cpp"
     "system/nvs_manager.cpp"
     "led/led_strip.cpp"
     "led/led_strip_encoder.cpp"
