@@ -25,37 +25,56 @@ BLEGattServer::~BLEGattServer() {
 }
 
 esp_err_t BLEGattServer::bleControllerInitAndEnable() {
-    esp_err_t ret;
-    ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT));
-
-    esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
-    ret = esp_bt_controller_init(&bt_cfg);
-    if (ret) {
-        ESP_LOGE(TAG, "%s initialize controller failed: %s", __func__, esp_err_to_name(ret));
-        return ret;
-    }
-
-    ret = esp_bt_controller_enable(ESP_BT_MODE_BLE);
-    if (ret) {
-        ESP_LOGE(TAG, "%s enable controller failed: %s", __func__, esp_err_to_name(ret));
-        return ret;
-    }
+    // In ESP-IDF 5.x, BLE controller initialization is handled automatically
+    // by the Bluedroid stack - no manual controller init needed for BLE-only
+    ESP_LOGI(TAG, "BLE controller initialization skipped - handled by Bluedroid");
     return ESP_OK;
 }
 
 esp_err_t BLEGattServer::bleBluedroidInitAndEnable() {
     esp_err_t ret;
-    ret = esp_bluedroid_init();
-    if (ret) {
-        ESP_LOGE(TAG, "%s init bluedroid failed: %s", __func__, esp_err_to_name(ret));
-        return ret;
+    
+    // Check if Bluedroid is already initialized (may happen with WiFi coexistence)
+    esp_bt_controller_status_t bt_state = esp_bt_controller_get_status();
+    if (bt_state == ESP_BT_CONTROLLER_STATUS_IDLE) {
+        ESP_LOGI(TAG, "BT controller not initialized, initializing now");
+        esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
+        ret = esp_bt_controller_init(&bt_cfg);
+        if (ret) {
+            ESP_LOGE(TAG, "%s bt controller init failed: %s", __func__, esp_err_to_name(ret));
+            return ret;
+        }
+        ret = esp_bt_controller_enable(ESP_BT_MODE_BLE);
+        if (ret) {
+            ESP_LOGE(TAG, "%s bt controller enable failed: %s", __func__, esp_err_to_name(ret));
+            return ret;
+        }
+    } else {
+        ESP_LOGI(TAG, "BT controller already initialized (likely by WiFi coexistence)");
     }
-
-    ret = esp_bluedroid_enable();
-    if (ret) {
-        ESP_LOGE(TAG, "%s enable bluedroid failed: %s", __func__, esp_err_to_name(ret));
-        return ret;
+    
+    // Check if Bluedroid is already initialized
+    esp_bluedroid_status_t bluedroid_status = esp_bluedroid_get_status();
+    if (bluedroid_status == ESP_BLUEDROID_STATUS_UNINITIALIZED) {
+        ret = esp_bluedroid_init();
+        if (ret) {
+            ESP_LOGE(TAG, "%s init bluedroid failed: %s", __func__, esp_err_to_name(ret));
+            return ret;
+        }
+    } else {
+        ESP_LOGI(TAG, "Bluedroid already initialized");
     }
+    
+    if (bluedroid_status != ESP_BLUEDROID_STATUS_ENABLED) {
+        ret = esp_bluedroid_enable();
+        if (ret) {
+            ESP_LOGE(TAG, "%s enable bluedroid failed: %s", __func__, esp_err_to_name(ret));
+            return ret;
+        }
+    } else {
+        ESP_LOGI(TAG, "Bluedroid already enabled");
+    }
+    
     return ESP_OK;
 }
 

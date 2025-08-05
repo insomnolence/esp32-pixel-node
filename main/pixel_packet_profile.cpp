@@ -40,9 +40,15 @@ void PixelPacketProfile::gattsEventHandler(esp_gatts_cb_event_t event, esp_gatt_
             break;
         case ESP_GATTS_CONNECT_EVT:
             handleConnectEvent(gatts_if, param);
+            if (ble_connection_callback) {
+                ble_connection_callback(true);
+            }
             break;
         case ESP_GATTS_DISCONNECT_EVT:
             handleDisconnectEvent(gatts_if, param);
+            if (ble_connection_callback) {
+                ble_connection_callback(false);
+            }
             break;
         case ESP_GATTS_START_EVT:
             handleStartEvent(gatts_if, param);
@@ -90,13 +96,20 @@ void PixelPacketProfile::handleReadEvent(esp_gatt_if_t gatts_if, esp_ble_gatts_c
 
 void PixelPacketProfile::handleWriteEvent(esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) {
     ESP_LOGI(TAG, "PixelPacketProfile GATT_WRITE_EVT, conn_id %d, trans_id %" PRIu32 ", handle %d", param->write.conn_id, param->write.trans_id, param->write.handle);
-    if (!param->write.is_prep) {
-        Packet received_pkt;
-        memcpy(&received_pkt, param->write.value, sizeof(Packet));
-        ESP_LOGI(TAG, "Received Packet: command=%u, brightness=%u, speed=%u, pattern=%u",
-                 received_pkt.command, received_pkt.brightness, received_pkt.speed, received_pkt.pattern);
-        ESP_LOGI(TAG, "Color: R=%" PRIu32 ", G=%" PRIu32 ", B=%" PRIu32, received_pkt.color[0], received_pkt.color[1], received_pkt.color[2]);
-        ESP_LOGI(TAG, "Level: L1=%u, L2=%u, L3=%u", received_pkt.level[0], received_pkt.level[1], received_pkt.level[2]);
+    if (!param->write.is_prep && param->write.len > 0) {
+        // Create generic packet from BLE data (any format)
+        GenericPacket received_packet(param->write.value, param->write.len);
+        
+        ESP_LOGI(TAG, "Received BLE packet: %zu bytes", received_packet.getLength());
+        
+        // Log packet contents in hex for debugging
+        const uint8_t* data = received_packet.getData();
+        ESP_LOG_BUFFER_HEX(TAG, data, received_packet.getLength());
+        
+        // Forward generic packet to mesh network if callback is set
+        if (packet_forward_callback && received_packet.isValid()) {
+            packet_forward_callback(received_packet);
+        }
     }
 
     if (getDescrHandle() == param->write.handle && param->write.len == 2) {
@@ -150,4 +163,12 @@ void PixelPacketProfile::handleAddCharEvent(esp_gatt_if_t gatts_if, esp_ble_gatt
 
 void PixelPacketProfile::handleAddCharDescrEvent(esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param){
     GattProfile::handleAddCharDescrEvent(gatts_if, param);
+}
+
+void PixelPacketProfile::setBleConnectionCallback(std::function<void(bool)> callback) {
+    ble_connection_callback = callback;
+}
+
+void PixelPacketProfile::setPacketForwardCallback(std::function<void(const GenericPacket&)> callback) {
+    packet_forward_callback = callback;
 }
