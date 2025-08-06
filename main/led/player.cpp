@@ -63,8 +63,9 @@ bool Player::UpdatePattern(led_time_t now, LEDStrip *strip) {
         return false;
     }
     
-    if (xSemaphoreTake(updateMutex, pdMS_TO_TICKS(10)) != pdTRUE) {
-        // Don't block - just skip this update if mutex unavailable
+    if (xSemaphoreTake(updateMutex, pdMS_TO_TICKS(50)) != pdTRUE) {
+        // Don't block too long - skip this update if mutex unavailable
+        ESP_LOGW(TAG, "Mutex timeout in UpdatePattern - skipping frame");
         return false;
     }
     
@@ -119,6 +120,11 @@ bool Player::UpdatePattern(led_time_t now, LEDStrip *strip) {
             // Clear strip when switching to new pattern to prevent leftover pixels
             strip->clear();
             
+            // Ensure brightness is set BEFORE initializing pattern
+            uint8_t brightness = sequence->GetBrightness(step);
+            strip->setBrightness(brightness);
+            ESP_LOGI(TAG, "Set strip brightness to %d for new pattern", brightness);
+            
             // Initialize pattern with sequence colors and levels
             pattern->Init(strip, colors, levels, 0);
         }
@@ -152,7 +158,6 @@ void Player::UpdateStrip(led_time_t now, LEDStrip *strip) {
         // Check if we need to call Loop() for patterns that need it
         led_time_t elapsed = (now - stepTime) * speed / 100;
         led_time_t currentCycle = elapsed / duration;
-        static led_time_t lastCycle = 0;
         
         if (currentCycle != lastCycle) {
             // New cycle - call Loop() for patterns that implement it

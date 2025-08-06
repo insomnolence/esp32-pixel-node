@@ -9,8 +9,14 @@
 #include "esp_timer.h"
 #include <memory>
 
-#define DEFAULT_LED_PIN 7 // Dan's board
-//#define DEFAULT_LED_PIN 13 // Adafruit board
+// Default LED pin based on target platform
+#ifdef CONFIG_IDF_TARGET_ESP32C3
+#define DEFAULT_LED_PIN 7   // ESP32C3 board
+#elif CONFIG_IDF_TARGET_ESP32
+#define DEFAULT_LED_PIN 13  // ESP32 board  
+#else
+#define DEFAULT_LED_PIN 7   // Default fallback
+#endif
 #define DEFAULT_LED_COUNT 60
 #define PHYSICAL_LED_STRIP_LENGTH 144  // Total LEDs on physical strip (for clearing extras)
 
@@ -61,6 +67,7 @@ private:
     // Helper methods
     bool parsePacketData(const GenericPacket& packet, Packet& parsedPacket) const;
     void logPacketInfo(const Packet& pkt) const;
+    void cleanup(); // Clean up allocated resources on failure
 };
 
 #endif // LED_CONTROLLER_H_

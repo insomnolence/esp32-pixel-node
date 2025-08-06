@@ -259,12 +259,20 @@ uint32_t LEDStrip::applyBrightness(uint32_t color) const {
     uint8_t g = (color >> 8) & 0xFF;
     uint8_t b = color & 0xFF;
     
-    // Use Arduino's fade function for brightness to preserve color saturation
-    r = fade(0, r, brightness_level);
-    g = fade(0, g, brightness_level);
-    b = fade(0, b, brightness_level);
+    // Use standard brightness scaling method (same as Adafruit_NeoPixel)
+    // This approach preserves color hue better than interpolation methods
+    uint16_t scale = brightness_level + 1; // +1 for efficient bit shifting
+    uint8_t new_r = (r * scale) >> 8;
+    uint8_t new_g = (g * scale) >> 8;
+    uint8_t new_b = (b * scale) >> 8;
     
-    return Color(r, g, b);
+    // Debug logging for color corruption investigation
+    if (color == RED || color == GREEN || color == BLUE || color == WHITE) {
+        ESP_LOGD(TAG, "Brightness: %d, Color: 0x%06lX -> RGB(%d,%d,%d) -> RGB(%d,%d,%d)", 
+                 brightness_level, color, r, g, b, new_r, new_g, new_b);
+    }
+    
+    return Color(new_r, new_g, new_b);
 }
 
 // Static color utility functions

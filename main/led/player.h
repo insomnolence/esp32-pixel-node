@@ -19,7 +19,7 @@ public:
     Player()
         : sequence(nullptr), step(0), stepTime(0),
           pattern(nullptr), patternId(PATTERN_GRADIENT), 
-          lastUpdate(0), speed(35), updateMutex(nullptr)
+          lastUpdate(0), lastCycle(0), speed(35), updateMutex(nullptr)
     {
         updateMutex = xSemaphoreCreateMutex();
     }
@@ -58,6 +58,7 @@ protected:
     std::unique_ptr<Pattern> pattern; // Smart pointer for automatic cleanup
     uint8_t patternId;    
     led_time_t lastUpdate;
+    led_time_t lastCycle;  // Track pattern cycles for thread-safe Loop() calls
     uint8_t speed;
     
     SemaphoreHandle_t updateMutex; // Mutex for thread-safe updates

@@ -20,19 +20,30 @@ LEDController::LEDController(uint8_t pin, uint16_t count)
 }
 
 LEDController::~LEDController() {
+    cleanup();
+}
+
+void LEDController::cleanup() {
     delete strip;
+    strip = nullptr;
     delete player;
+    player = nullptr;
     delete idleSequence;
+    idleSequence = nullptr;
     delete alertSequence;
+    alertSequence = nullptr;
     delete randomSequence;
+    randomSequence = nullptr;
     delete packetSequence;
+    packetSequence = nullptr;
+    initialized = false;
 }
 
 esp_err_t LEDController::begin() {
     ESP_LOGI(TAG, "Initializing LED Controller - Pin: %d, Count: %d", ledPin, ledCount);
     
     // Create LED strip
-    strip = new LEDStrip(ledCount, ledPin);
+    strip = new(std::nothrow) LEDStrip(ledCount, ledPin);
     if (!strip) {
         ESP_LOGE(TAG, "Failed to create LED strip");
         return ESP_ERR_NO_MEM;
@@ -41,24 +52,44 @@ esp_err_t LEDController::begin() {
     esp_err_t ret = strip->begin();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to initialize LED strip: %s", esp_err_to_name(ret));
+        cleanup(); // Clean up on failure
         return ret;
     }
     
     // Create player
-    player = new Player();
+    player = new(std::nothrow) Player();
     if (!player) {
         ESP_LOGE(TAG, "Failed to create player");
+        cleanup(); // Clean up on failure
         return ESP_ERR_NO_MEM;
     }
     
-    // Create sequences
-    idleSequence = new IdleSequence();
-    alertSequence = new AlertSequence();
-    randomSequence = new RandomSequence();
-    packetSequence = new PacketSequence(&currentPacket);
+    // Create sequences with proper error checking
+    idleSequence = new(std::nothrow) IdleSequence();
+    if (!idleSequence) {
+        ESP_LOGE(TAG, "Failed to create idle sequence");
+        cleanup();
+        return ESP_ERR_NO_MEM;
+    }
     
-    if (!idleSequence || !alertSequence || !randomSequence || !packetSequence) {
-        ESP_LOGE(TAG, "Failed to create sequences");
+    alertSequence = new(std::nothrow) AlertSequence();
+    if (!alertSequence) {
+        ESP_LOGE(TAG, "Failed to create alert sequence");
+        cleanup();
+        return ESP_ERR_NO_MEM;
+    }
+    
+    randomSequence = new(std::nothrow) RandomSequence();
+    if (!randomSequence) {
+        ESP_LOGE(TAG, "Failed to create random sequence");
+        cleanup();
+        return ESP_ERR_NO_MEM;
+    }
+    
+    packetSequence = new(std::nothrow) PacketSequence(&currentPacket);
+    if (!packetSequence) {
+        ESP_LOGE(TAG, "Failed to create packet sequence");
+        cleanup();
         return ESP_ERR_NO_MEM;
     }
     

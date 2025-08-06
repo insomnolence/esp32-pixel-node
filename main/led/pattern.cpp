@@ -372,7 +372,9 @@ void GradientPattern::Loop(LEDStrip *strip, led_time_t offset) {
                 temp_mp2[i] = esp_random() % numPixels; // Generate new random map
             }
             
-            // Atomically swap the arrays
+            // Update arrays (thread-safe due to Player class mutex protection)
+            // Note: This is safe because both Loop() and Update() are called 
+            // under the same Player mutex in UpdateStrip()
             memcpy(mp1, temp_mp1, numPixels);
             memcpy(mp2, temp_mp2, numPixels);
             
