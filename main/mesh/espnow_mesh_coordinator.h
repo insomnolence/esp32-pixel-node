@@ -89,6 +89,9 @@ public:
     void checkForRootElection();
     void sendRootAnnouncement();
     
+    // Root stepDown functionality
+    void stepDownIfNeeded();
+    
     // Network health monitoring
     struct NetworkStats {
         uint32_t packets_sent = 0;

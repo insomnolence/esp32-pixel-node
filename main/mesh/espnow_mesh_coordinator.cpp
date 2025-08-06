@@ -172,6 +172,9 @@ void ESPNowMeshCoordinator::onBleConnected() {
     }
     
     transitionToRole(NodeRole::MESH_ROOT_ACTIVE);
+    
+    // Immediately announce BLE root status to make other autonomous roots step down
+    sendRootAnnouncement();
 }
 
 void ESPNowMeshCoordinator::onBleDisconnected() {
@@ -417,6 +420,26 @@ void ESPNowMeshCoordinator::handleReceivedPacket(const uint8_t *mac_addr, const 
                      (mesh_packet->source_mac[4] << 8) | mesh_packet->source_mac[5]);
             heard_from_root = true;
             last_root_announcement = esp_timer_get_time() / 1000;
+            
+            // Check if this is a superior BLE root announcement - step down if we're autonomous root
+            if (mesh_packet->data_len >= 8) {
+                bool announcing_node_has_ble = (mesh_packet->data[6] == 1); // BLE status flag
+                uint16_t announcing_node_id = (mesh_packet->data[4] << 8) | mesh_packet->data[5];
+                
+                if (announcing_node_has_ble) {
+                    ESP_LOGI(TAG, "Detected BLE-connected root announcement from node 0x%04X", announcing_node_id);
+                    
+                    // If we're autonomous root, step down for BLE root (higher priority)
+                    if (current_role == NodeRole::MESH_ROOT_AUTONOMOUS) {
+                        ESP_LOGI(TAG, "Stepping down from autonomous root - BLE root detected (node 0x%04X)", announcing_node_id);
+                        transitionToRole(NodeRole::MESH_CLIENT);
+                        election_timer = esp_timer_get_time() / 1000 + 60000; // Wait 60 seconds before next election attempt
+                    }
+                } else {
+                    ESP_LOGI(TAG, "Received autonomous root announcement from node 0x%04X", announcing_node_id);
+                }
+            }
+            
             // Cancel our own election if we were about to become root
             if (current_role == NodeRole::MESH_CLIENT) {
                 election_timer = esp_timer_get_time() / 1000 + 45000; // Wait 45 seconds before next attempt
@@ -531,11 +554,21 @@ void ESPNowMeshCoordinator::becomeAutonomousRoot() {
 }
 
 void ESPNowMeshCoordinator::sendRootAnnouncement() {
-    ESP_LOGI(TAG, "Announcing autonomous root status to mesh");
+    const char* root_type = (current_role == NodeRole::MESH_ROOT_ACTIVE) ? "BLE root" : "autonomous root";
+    ESP_LOGI(TAG, "Announcing %s status to mesh", root_type);
     
-    // Create simple announcement packet
+    // Create announcement packet with root type information
     GenericPacket announcement;
-    uint8_t announcement_data[] = {0xAA, 0xBB, 0xCC, 0xDD}; // Magic bytes for root announcement
+    uint8_t announcement_data[8];
+    announcement_data[0] = 0xAA; // Root announcement magic byte 1
+    announcement_data[1] = 0xBB; // Root announcement magic byte 2  
+    announcement_data[2] = 0xCC; // Root announcement magic byte 3
+    announcement_data[3] = 0xDD; // Root announcement magic byte 4
+    announcement_data[4] = (node_id >> 8) & 0xFF; // Node ID high byte
+    announcement_data[5] = node_id & 0xFF;        // Node ID low byte
+    announcement_data[6] = ble_connected ? 1 : 0; // Root type: 1 = BLE root (highest priority), 0 = autonomous root
+    announcement_data[7] = (current_role == NodeRole::MESH_ROOT_ACTIVE) ? 1 : 0; // Confirmation of BLE status
+    
     announcement.setData(announcement_data, sizeof(announcement_data));
     
     ESPNowMeshPacket packet = createMeshPacket(MeshPacketType::ROOT_ANNOUNCEMENT, announcement, 4);
@@ -561,4 +594,16 @@ esp_err_t ESPNowMeshCoordinator::sendElectionPacket() {
     
     ESPNowMeshPacket packet = createMeshPacket(MeshPacketType::ROOT_ELECTION, election, 4);
     return sendMeshPacket(packet);
+}
+
+void ESPNowMeshCoordinator::stepDownIfNeeded() {
+    // This method provides a way to trigger stepDown evaluation externally
+    // Currently, stepDown logic is handled in ROOT_ANNOUNCEMENT processing
+    // This method is here for completeness and potential future use
+    
+    if (current_role == NodeRole::MESH_ROOT_AUTONOMOUS) {
+        ESP_LOGD(TAG, "stepDownIfNeeded called - autonomous root checking for superior roots");
+        // In the current implementation, stepDown happens automatically when 
+        // BLE root announcements are received in handleReceivedPacket()
+    }
 }

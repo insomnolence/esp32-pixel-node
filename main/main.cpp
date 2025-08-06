@@ -159,9 +159,11 @@ extern "C" void app_main(void) {
         // Check for autonomous root election
         meshCoordinator.checkForRootElection();
         
-        // If we're autonomous root, send periodic announcements (every 5 seconds)
+        // Root nodes send periodic announcements (every 5 seconds)
+        // - BLE roots: Ensure autonomous roots know about superior BLE root and step down  
+        // - Autonomous roots: Maintain root authority in absence of BLE root
         static uint32_t lastRootAnnouncement = 0;
-        if (meshCoordinator.isAutonomousRoot() && (now - lastRootAnnouncement > 5000)) {
+        if (meshCoordinator.isRootNode() && (now - lastRootAnnouncement > 5000)) {
             meshCoordinator.sendRootAnnouncement();
             lastRootAnnouncement = now;
         }
