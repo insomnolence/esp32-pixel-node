@@ -153,10 +153,6 @@ void PixelPacketProfile::handleWriteEvent(esp_gatt_if_t gatts_if, esp_ble_gatts_
 }
 
 void PixelPacketProfile::handleCreateServiceEvent(esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param){
-    // TBD: Might call this after this after the rest of this code is set up. 
-    // Reconsider using indicators that the bluetooth service has "started advertising" so we don't 
-    // send multiple messages.
-    //GattProfile::handleCreateServiceEvent(gatts_if, param);
     setServiceHandle(param->create.service_handle);
     
     esp_err_t start_service_ret = esp_ble_gatts_start_service(getServiceHandle());

@@ -279,7 +279,7 @@ uint32_t LEDStrip::applyBrightness(uint32_t color) const {
     uint8_t new_g = (g * scale) >> 8;
     uint8_t new_b = (b * scale) >> 8;
     
-    // Debug logging for color corruption investigation
+    // Debug logging for primary colors (useful for color accuracy verification)
     if (color == RED || color == GREEN || color == BLUE || color == WHITE) {
         ESP_LOGD(TAG, "Brightness: %d, Color: 0x%06lX -> RGB(%d,%d,%d) -> RGB(%d,%d,%d)", 
                  brightness_level, color, r, g, b, new_r, new_g, new_b);

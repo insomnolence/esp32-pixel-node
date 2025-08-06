@@ -28,10 +28,6 @@ private:
     bool processCurrentPacket(const GenericPacket& packet);
     void logCurrentPacket(const Packet& pkt);
     
-    // Future packet format handlers (add as needed)
-    // bool processFuturePacketV2(const GenericPacket& packet);
-    // bool processFuturePacketV3(const GenericPacket& packet);
-    
     // Packet format detection
     enum class PacketFormat {
         UNKNOWN,

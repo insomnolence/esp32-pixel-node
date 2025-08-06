@@ -24,10 +24,6 @@ bool LedPacketProcessor::processPacket(const GenericPacket& packet) {
         case PacketFormat::CURRENT_PACKET_V1:
             return processCurrentPacket(packet);
             
-        // Future formats can be added here:
-        // case PacketFormat::FUTURE_PACKET_V2:
-        //     return processFuturePacketV2(packet);
-            
         case PacketFormat::UNKNOWN:
         default:
             ESP_LOGW(TAG, "Unknown packet format, size: %zu bytes", packet.getLength());
@@ -49,7 +45,6 @@ void LedPacketProcessor::setLedControlCallback(std::function<void(const GenericP
 }
 
 LedPacketProcessor::PacketFormat LedPacketProcessor::detectPacketFormat(const GenericPacket& packet) const {
-    // Debug: Log actual sizes for comparison
     ESP_LOGI(TAG, "Packet size: %zu bytes, Expected Packet struct size: %zu bytes", 
              packet.getLength(), sizeof(Packet));
     
@@ -59,22 +54,13 @@ LedPacketProcessor::PacketFormat LedPacketProcessor::detectPacketFormat(const Ge
         return PacketFormat::CURRENT_PACKET_V1;
     }
     
-    // TEMPORARY FIX: Also check for 19-byte packets (expected mobile app format)
+    // Handle 19-byte mobile app packets
     if (packet.getLength() == 19) {
         ESP_LOGI(TAG, "📱 Detected 19-byte mobile app packet - treating as current format");
         return PacketFormat::CURRENT_PACKET_V1;
     }
     
     // Future packet format detection can be added here:
-    // if (packet.couldBePacketType<FuturePacketV2>()) {
-    //     return PacketFormat::FUTURE_PACKET_V2;
-    // }
-    
-    // Could also detect based on header bytes, magic numbers, etc.
-    // const uint8_t* data = packet.getData();
-    // if (packet.getLength() >= 4 && data[0] == 0xAB && data[1] == 0xCD) {
-    //     return PacketFormat::FUTURE_PACKET_V2;
-    // }
     
     return PacketFormat::UNKNOWN;
 }
@@ -117,15 +103,14 @@ bool LedPacketProcessor::processCurrentPacket(const GenericPacket& packet) {
     
     logCurrentPacket(current_pkt);
     
-    // Notify callback that LED control should happen
+    // Forward to LED controller via callback for actual LED control
     if (led_control_callback) {
         led_control_callback(packet, "Current LED Packet V1");
+        ESP_LOGI(TAG, "🌈 LED Control forwarded: cmd=%u, brightness=%u, speed=%u, pattern=%u",
+                 current_pkt.command, current_pkt.brightness, current_pkt.speed, current_pkt.pattern);
+    } else {
+        ESP_LOGW(TAG, "No LED control callback registered");
     }
-    
-    // TODO: Add actual LED strip control here
-    // For now, just log the packet contents
-    ESP_LOGI(TAG, "🌈 LED Strip Control: cmd=%u, brightness=%u, speed=%u, pattern=%u",
-             current_pkt.command, current_pkt.brightness, current_pkt.speed, current_pkt.pattern);
     
     return true;
 }
