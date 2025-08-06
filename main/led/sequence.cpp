@@ -7,7 +7,7 @@ static const char* TAG = "Sequence";
 
 // IdleSequence implementation - matches Arduino: Red-White-Green gradient with slow speed
 static const Step idle_steps[] = {
-    {0, 20, 35, PATTERN_GRADIENT, {RED, WHITE, GREEN}, 17},      // Arduino idle: RWG gradient, brightness 20, speed 35, level 17
+    {0, 127, 35, PATTERN_GRADIENT, {RED, WHITE, GREEN}, 17},      // Test: Higher brightness to check color saturation
 };
 
 IdleSequence::IdleSequence() 

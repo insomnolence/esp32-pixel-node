@@ -259,9 +259,10 @@ uint32_t LEDStrip::applyBrightness(uint32_t color) const {
     uint8_t g = (color >> 8) & 0xFF;
     uint8_t b = color & 0xFF;
     
-    r = (r * brightness_level) >> 8;
-    g = (g * brightness_level) >> 8;
-    b = (b * brightness_level) >> 8;
+    // Use Arduino's fade function for brightness to preserve color saturation
+    r = fade(0, r, brightness_level);
+    g = fade(0, g, brightness_level);
+    b = fade(0, b, brightness_level);
     
     return Color(r, g, b);
 }
@@ -272,9 +273,10 @@ uint32_t LEDStrip::ColorFade(uint32_t color, uint8_t fade_value) {
     uint8_t g = (color >> 8) & 0xFF;
     uint8_t b = color & 0xFF;
     
-    r = (r * fade_value) >> 8;
-    g = (g * fade_value) >> 8;
-    b = (b * fade_value) >> 8;
+    // Use Arduino's exact fade formula: fade(0, color, fade_value)
+    r = fade(0, r, fade_value);
+    g = fade(0, g, fade_value);
+    b = fade(0, b, fade_value);
     
     return Color(r, g, b);
 }
@@ -296,20 +298,21 @@ uint32_t LEDStrip::ColorBlend(uint32_t color1, uint32_t color2, uint8_t blend_va
 }
 
 uint32_t LEDStrip::ColorRandom() {
-    return Color(esp_random() & 0xFF, esp_random() & 0xFF, esp_random() & 0xFF);
+    // Use Arduino's exact ColorRandom implementation with ColorWheel
+    return ColorWheel(esp_random() & 0xFF);
 }
 
 uint32_t LEDStrip::ColorWheel(uint8_t wheel_pos) {
-    wheel_pos = 255 - wheel_pos;
+    // Use Arduino's exact ColorWheel implementation (no inversion)
     if (wheel_pos < 85) {
-        return Color(255 - wheel_pos * 3, 0, wheel_pos * 3);
-    }
-    if (wheel_pos < 170) {
+        return Color(wheel_pos * 3, 255 - wheel_pos * 3, 0);
+    } else if (wheel_pos < 170) {
         wheel_pos -= 85;
+        return Color(255 - wheel_pos * 3, 0, wheel_pos * 3);
+    } else {
+        wheel_pos -= 170;
         return Color(0, wheel_pos * 3, 255 - wheel_pos * 3);
     }
-    wheel_pos -= 170;
-    return Color(wheel_pos * 3, 255 - wheel_pos * 3, 0);
 }
 
 uint32_t LEDStrip::Color(uint8_t r, uint8_t g, uint8_t b) {

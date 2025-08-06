@@ -99,7 +99,16 @@ bool Player::UpdatePattern(led_time_t now, LEDStrip *strip) {
     }
     
     if (needNewPattern) {
-        ESP_LOGI(TAG, "Creating new pattern: %d", currentPatternId);
+        // Get colors and levels for logging
+        uint32_t colors[3];
+        uint8_t levels[3];
+        for (int i = 0; i < 3; i++) {
+            colors[i] = sequence->GetColors(step, i);
+            levels[i] = sequence->GetLevels(step, i);
+        }
+        
+        ESP_LOGI(TAG, "Creating new pattern %d with colors=[0x%06lX, 0x%06lX, 0x%06lX], levels=[%d, %d, %d]", 
+                 currentPatternId, colors[0], colors[1], colors[2], levels[0], levels[1], levels[2]);
         
         // Use smart pointer for automatic memory management
         pattern.reset(CreatePattern(currentPatternId));
@@ -111,14 +120,6 @@ bool Player::UpdatePattern(led_time_t now, LEDStrip *strip) {
             strip->clear();
             
             // Initialize pattern with sequence colors and levels
-            uint32_t colors[3];
-            uint8_t levels[3];
-            
-            for (int i = 0; i < 3; i++) {
-                colors[i] = sequence->GetColors(step, i);
-                levels[i] = sequence->GetLevels(step, i);
-            }
-            
             pattern->Init(strip, colors, levels, 0);
         }
     }

@@ -307,7 +307,10 @@ void GradientPattern::Init(LEDStrip *strip, const uint32_t *colors, const uint8_
 void GradientPattern::Init(LEDStrip *strip, led_time_t offset) {
     uint16_t numPixels = strip->numPixels();
     
-    // Set up gradient similar to Arduino version
+    ESP_LOGI("GradientPattern", "Setting up gradient with colors=[0x%06lX, 0x%06lX, 0x%06lX], level[0]=%d", 
+             m_color[0], m_color[1], m_color[2], m_level[0]);
+    
+    // Set up gradient exactly like Arduino version
     grad.clearSteps();
     if (m_level[0] > 6 && m_level[0] < 249) {
         // Use level[0] to control gradient spread like Arduino
@@ -315,28 +318,38 @@ void GradientPattern::Init(LEDStrip *strip, led_time_t offset) {
         grad.addStep(m_level[0] / 3, m_color[1]);
         grad.addStep((m_level[0] * 2) / 3, m_color[2]);
         grad.addStep(m_level[0], m_color[0]);
-        grad.addStep(m_level[0] + 1, 0x000000);
-        grad.addStep(255, 0x000000);
+        grad.addStep(m_level[0] + 1, 0x000000);  // Arduino uses 0, not 0x000000
+        grad.addStep(255, 0x000000);             // Arduino uses 0, not 0x000000
+        ESP_LOGI("GradientPattern", "Level-controlled gradient: steps at 0, %d, %d, %d, %d, 255", 
+                 m_level[0]/3, (m_level[0]*2)/3, m_level[0], m_level[0]+1);
     } else {
-        // Default gradient for patterns that don't use level control
+        // Default gradient for patterns that don't use level control - Arduino wraps around
         grad.addStep(0, m_color[0]);
         grad.addStep(85, m_color[1]);
         grad.addStep(170, m_color[2]);
-        grad.addStep(255, m_color[0]);
+        grad.addStep(255, m_color[0]);  // Wrap around to first color like Arduino
+        ESP_LOGI("GradientPattern", "Default gradient: steps at 0, 85, 170, 255");
     }
+    
+    // Clean up old mapping arrays first
+    delete[] mp1;
+    delete[] mp2;
+    mp1 = nullptr;
+    mp2 = nullptr;
     
     // Allocate memory for gradient maps only if setup succeeded
     if (numPixels > 0) {
-        delete[] mp1;
-        delete[] mp2;
         mp1 = new uint8_t[numPixels];
         mp2 = new uint8_t[numPixels];
         
-        // Initialize mapping arrays
+        // Initialize mapping arrays exactly like Arduino
         if (mp1 && mp2) {
             for (uint16_t i = 0; i < numPixels; i++) {
                 mp1[i] = mp2[i] = i;
             }
+            ESP_LOGI("GradientPattern", "Initialized mapping arrays for %d pixels", numPixels);
+        } else {
+            ESP_LOGE("GradientPattern", "Failed to allocate mapping arrays for %d pixels", numPixels);
         }
     }
     
