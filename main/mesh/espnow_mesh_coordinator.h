@@ -13,6 +13,7 @@
 #include <functional>
 #include <memory>
 #include <set>
+#include <vector>
 #include <ctime>
 
 #define ESPNOW_MESH_MAX_PAYLOAD_LEN 200
@@ -29,8 +30,20 @@ enum class MeshPacketType : uint8_t {
     LED_PATTERN = 0x01,      // LED pattern/color updates (high priority)
     NODE_STATUS = 0x02,      // Node health/status (low priority)
     NETWORK_BEACON = 0x03,   // Network discovery/maintenance
-    ROOT_ELECTION = 0x04,    // Autonomous root election
-    ROOT_ANNOUNCEMENT = 0x05 // Root node announcement
+    ROOT_ELECTION = 0x04,    // Autonomous root election (legacy)
+    ROOT_ANNOUNCEMENT = 0x05,// Root node announcement
+    ELECTION_DISCOVERY = 0x06,   // New election system: Discovery phase
+    ELECTION_CANDIDATE = 0x07,   // New election system: Candidate announcement  
+    ELECTION_VOTE = 0x08,        // New election system: Vote casting
+    ELECTION_RESULT = 0x09       // New election system: Result announcement
+};
+
+enum class ElectionState : uint8_t {
+    ELECTION_IDLE = 0,       // Not participating in election
+    ELECTION_DISCOVERY,      // Listening for other candidates (3-7s)
+    ELECTION_CANDIDATE,      // Announcing candidacy (2-4s)
+    ELECTION_VOTING,         // Evaluating candidates and voting (2-3s)
+    ELECTION_CONFIRMED       // Election complete, transitioning to final role
 };
 
 struct ESPNowMeshPacket {
@@ -92,6 +105,15 @@ public:
     // Root stepDown functionality
     void stepDownIfNeeded();
     
+    // BLE connection priority comparison
+    uint32_t getBleConnectionAge() const;
+    
+    // Advanced election system
+    void startAdvancedElection();
+    void processElectionPacket(const ESPNowMeshPacket& packet);
+    uint32_t calculateNodePriority() const;
+    void checkElectionTimeout();
+    
     // Network health monitoring
     struct NetworkStats {
         uint32_t packets_sent = 0;
@@ -102,6 +124,23 @@ public:
     };
     
     const NetworkStats& getNetworkStats() const;
+
+    // Election candidate information
+    struct ElectionCandidate {
+        uint16_t node_id;
+        uint32_t priority_score;
+        uint32_t uptime_ms;
+        uint8_t mac_addr[6];
+        uint32_t timestamp_received;
+        
+        bool operator<(const ElectionCandidate& other) const {
+            // Higher priority score wins, use node_id as tiebreaker
+            if (priority_score != other.priority_score) {
+                return priority_score > other.priority_score;
+            }
+            return node_id < other.node_id;  // Lower node_id wins ties
+        }
+    };
 
 private:
     static const char* TAG;
@@ -121,6 +160,18 @@ private:
     uint32_t election_timer;
     uint32_t last_root_announcement;
     bool heard_from_root;
+    
+    // BLE connection timestamp tracking for priority comparison
+    uint32_t ble_connection_uptime_ms;  // When BLE connected (our uptime)
+    bool has_ble_connection_timestamp;  // Validity flag for timestamp
+    
+    // Advanced election system state
+    ElectionState election_state;
+    uint32_t election_start_time;
+    uint32_t election_phase_timeout;
+    std::vector<ElectionCandidate> election_candidates;
+    uint16_t elected_root_node_id;
+    uint32_t last_election_attempt;
     
     std::function<void(const GenericPacket&)> packet_callback;
     std::function<void(NodeRole, NodeRole)> role_change_callback;
@@ -151,6 +202,18 @@ private:
     // Autonomous root election methods
     void becomeAutonomousRoot();
     esp_err_t sendElectionPacket();
+    
+    // Advanced election helper methods
+    void sendElectionDiscoveryPacket();
+    void sendElectionCandidatePacket();
+    void sendElectionVotePacket();
+    void sendElectionResultPacket();
+    void processElectionDiscovery(const ESPNowMeshPacket& packet);
+    void processElectionCandidate(const ESPNowMeshPacket& packet);
+    void processElectionVote(const ESPNowMeshPacket& packet);
+    void processElectionResult(const ESPNowMeshPacket& packet);
+    void advanceElectionPhase();
+    ElectionCandidate selectBestCandidate() const;
 };
 
 #endif // ESPNOW_MESH_COORDINATOR_H_

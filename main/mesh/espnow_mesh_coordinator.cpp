@@ -43,9 +43,17 @@ ESPNowMeshCoordinator::ESPNowMeshCoordinator()
     , election_timer(0)
     , last_root_announcement(0)
     , heard_from_root(false)
+    , ble_connection_uptime_ms(0)
+    , has_ble_connection_timestamp(false)
+    , election_state(ElectionState::ELECTION_IDLE)
+    , election_start_time(0)
+    , election_phase_timeout(0)
+    , elected_root_node_id(0)
+    , last_election_attempt(0)
 {
     instance = this;
     memset(local_mac, 0, 6);
+    election_candidates.reserve(10);  // Pre-allocate for up to 10 candidates
 }
 
 ESPNowMeshCoordinator::~ESPNowMeshCoordinator() {
@@ -166,6 +174,12 @@ void ESPNowMeshCoordinator::onBleConnected() {
     ESP_LOGI(TAG, "BLE connected - becoming mesh root with mobile control");
     ble_connected = true;
     
+    // Record BLE connection timestamp for priority comparison
+    ble_connection_uptime_ms = esp_timer_get_time() / 1000;
+    has_ble_connection_timestamp = true;
+    
+    ESP_LOGI(TAG, "BLE connection timestamp recorded: uptime %lu ms", ble_connection_uptime_ms);
+    
     // BLE connection always takes priority over autonomous root
     if (current_role == NodeRole::MESH_ROOT_AUTONOMOUS) {
         ESP_LOGI(TAG, "Upgrading from autonomous root to BLE-controlled root");
@@ -180,6 +194,7 @@ void ESPNowMeshCoordinator::onBleConnected() {
 void ESPNowMeshCoordinator::onBleDisconnected() {
     ESP_LOGI(TAG, "BLE disconnected");
     ble_connected = false;
+    has_ble_connection_timestamp = false;  // Clear timestamp validity
     
     // If we were BLE root, step down but may become autonomous root later
     if (current_role == NodeRole::MESH_ROOT_ACTIVE) {
@@ -409,10 +424,18 @@ void ESPNowMeshCoordinator::handleReceivedPacket(const uint8_t *mac_addr, const 
             break;
             
         case MeshPacketType::ROOT_ELECTION:
-            ESP_LOGI(TAG, "Root election packet received from node 0x%04X", 
+            ESP_LOGI(TAG, "Legacy root election packet received from node 0x%04X", 
                      (mesh_packet->source_mac[4] << 8) | mesh_packet->source_mac[5]);
             // Reset our election timer if someone else is trying to become root
             election_timer = esp_timer_get_time() / 1000 + 15000; // Wait 15 more seconds
+            break;
+            
+        case MeshPacketType::ELECTION_DISCOVERY:
+        case MeshPacketType::ELECTION_CANDIDATE:
+        case MeshPacketType::ELECTION_VOTE:
+        case MeshPacketType::ELECTION_RESULT:
+            // Process advanced election packets
+            processElectionPacket(*mesh_packet);
             break;
             
         case MeshPacketType::ROOT_ANNOUNCEMENT:
@@ -421,19 +444,55 @@ void ESPNowMeshCoordinator::handleReceivedPacket(const uint8_t *mac_addr, const 
             heard_from_root = true;
             last_root_announcement = esp_timer_get_time() / 1000;
             
-            // Check if this is a superior BLE root announcement - step down if we're autonomous root
+            // Process root announcement with BLE priority comparison
             if (mesh_packet->data_len >= 8) {
                 bool announcing_node_has_ble = (mesh_packet->data[6] == 1); // BLE status flag
                 uint16_t announcing_node_id = (mesh_packet->data[4] << 8) | mesh_packet->data[5];
                 
+                // Extract BLE connection age if available (12-byte format)
+                uint32_t their_ble_age = UINT32_MAX;  // Default to oldest (lowest priority)
+                if (mesh_packet->data_len >= 12) {
+                    their_ble_age = ((uint32_t)mesh_packet->data[8] << 24) |
+                                   ((uint32_t)mesh_packet->data[9] << 16) |
+                                   ((uint32_t)mesh_packet->data[10] << 8) |
+                                   ((uint32_t)mesh_packet->data[11]);
+                }
+                
                 if (announcing_node_has_ble) {
-                    ESP_LOGI(TAG, "Detected BLE-connected root announcement from node 0x%04X", announcing_node_id);
+                    ESP_LOGI(TAG, "Detected BLE-connected root announcement from node 0x%04X (BLE age: %lu ms)", 
+                             announcing_node_id, their_ble_age);
                     
-                    // If we're autonomous root, step down for BLE root (higher priority)
+                    // If we're autonomous root, step down for any BLE root (higher priority)
                     if (current_role == NodeRole::MESH_ROOT_AUTONOMOUS) {
                         ESP_LOGI(TAG, "Stepping down from autonomous root - BLE root detected (node 0x%04X)", announcing_node_id);
                         transitionToRole(NodeRole::MESH_CLIENT);
                         election_timer = esp_timer_get_time() / 1000 + 60000; // Wait 60 seconds before next election attempt
+                    }
+                    // NEW: BLE-to-BLE priority comparison - newer BLE connection wins
+                    else if (current_role == NodeRole::MESH_ROOT_ACTIVE && ble_connected) {
+                        uint32_t our_ble_age = getBleConnectionAge();
+                        
+                        ESP_LOGI(TAG, "BLE root priority comparison: Our BLE age %lu ms vs Their BLE age %lu ms", 
+                                 our_ble_age, their_ble_age);
+                        
+                        bool they_have_newer_ble = false;
+                        
+                        if (their_ble_age < our_ble_age) {
+                            // They connected more recently
+                            they_have_newer_ble = true;
+                        } else if (their_ble_age == our_ble_age) {
+                            // Same connection age, use node ID as tiebreaker (lower node ID wins)
+                            they_have_newer_ble = (announcing_node_id < node_id);
+                        }
+                        
+                        if (they_have_newer_ble) {
+                            ESP_LOGI(TAG, "Stepping down from BLE root - Node 0x%04X has newer BLE connection (%lu vs %lu ms ago)", 
+                                     announcing_node_id, their_ble_age, our_ble_age);
+                            transitionToRole(NodeRole::MESH_CLIENT);
+                            election_timer = esp_timer_get_time() / 1000 + 60000; // Wait 60 seconds before next election attempt
+                        } else {
+                            ESP_LOGI(TAG, "Maintaining BLE root - Our BLE connection is newer or equal priority");
+                        }
                     }
                 } else {
                     ESP_LOGI(TAG, "Received autonomous root announcement from node 0x%04X", announcing_node_id);
@@ -530,10 +589,10 @@ void ESPNowMeshCoordinator::checkForRootElection() {
         heard_from_root = false;
     }
     
-    // If election timer expired and no root heard, try to become autonomous root
+    // If election timer expired and no root heard, start advanced election
     if (current_time >= election_timer && !heard_from_root && !ble_connected) {
-        ESP_LOGI(TAG, "No root detected for 30+ seconds - attempting autonomous root election");
-        becomeAutonomousRoot();
+        ESP_LOGI(TAG, "No root detected for 30+ seconds - starting advanced election system");
+        startAdvancedElection();
     }
 }
 
@@ -555,11 +614,13 @@ void ESPNowMeshCoordinator::becomeAutonomousRoot() {
 
 void ESPNowMeshCoordinator::sendRootAnnouncement() {
     const char* root_type = (current_role == NodeRole::MESH_ROOT_ACTIVE) ? "BLE root" : "autonomous root";
-    ESP_LOGI(TAG, "Announcing %s status to mesh", root_type);
+    uint32_t ble_age = getBleConnectionAge();
     
-    // Create announcement packet with root type information
+    ESP_LOGI(TAG, "Announcing %s status to mesh (BLE age: %lu ms)", root_type, ble_age);
+    
+    // Create announcement packet with root type and BLE priority information
     GenericPacket announcement;
-    uint8_t announcement_data[8];
+    uint8_t announcement_data[12];  // Extended from 8 to 12 bytes
     announcement_data[0] = 0xAA; // Root announcement magic byte 1
     announcement_data[1] = 0xBB; // Root announcement magic byte 2  
     announcement_data[2] = 0xCC; // Root announcement magic byte 3
@@ -568,6 +629,12 @@ void ESPNowMeshCoordinator::sendRootAnnouncement() {
     announcement_data[5] = node_id & 0xFF;        // Node ID low byte
     announcement_data[6] = ble_connected ? 1 : 0; // Root type: 1 = BLE root (highest priority), 0 = autonomous root
     announcement_data[7] = (current_role == NodeRole::MESH_ROOT_ACTIVE) ? 1 : 0; // Confirmation of BLE status
+    
+    // BLE connection age (32-bit) - lower value = more recent connection = higher priority
+    announcement_data[8] = (ble_age >> 24) & 0xFF;  // BLE age byte 3 (MSB)
+    announcement_data[9] = (ble_age >> 16) & 0xFF;  // BLE age byte 2
+    announcement_data[10] = (ble_age >> 8) & 0xFF;  // BLE age byte 1  
+    announcement_data[11] = ble_age & 0xFF;         // BLE age byte 0 (LSB)
     
     announcement.setData(announcement_data, sizeof(announcement_data));
     
@@ -606,4 +673,556 @@ void ESPNowMeshCoordinator::stepDownIfNeeded() {
         // In the current implementation, stepDown happens automatically when 
         // BLE root announcements are received in handleReceivedPacket()
     }
+}
+
+uint32_t ESPNowMeshCoordinator::getBleConnectionAge() const {
+    if (!has_ble_connection_timestamp) {
+        return UINT32_MAX;  // No BLE connection = oldest possible (lowest priority)
+    }
+    
+    uint32_t current_uptime = esp_timer_get_time() / 1000;
+    
+    // Handle uptime rollover (every ~49 days)
+    if (current_uptime < ble_connection_uptime_ms) {
+        // Rollover occurred, calculate across rollover boundary
+        uint32_t time_before_rollover = UINT32_MAX - ble_connection_uptime_ms;
+        return time_before_rollover + current_uptime;
+    }
+    
+    // Normal case: current uptime > connection uptime
+    return current_uptime - ble_connection_uptime_ms;
+}
+
+uint32_t ESPNowMeshCoordinator::calculateNodePriority() const {
+    uint32_t priority = 0;
+    uint32_t current_uptime = esp_timer_get_time() / 1000;
+    
+    // Priority factors (higher score = higher priority):
+    
+    // 1. BLE connection status (highest priority - 10000 points)
+    if (ble_connected) {
+        priority += 10000;
+    }
+    
+    // 2. Uptime stability factor (0-1000 points, max at 10+ minutes)
+    // Longer uptime = more stable = higher priority
+    uint32_t uptime_minutes = current_uptime / 60000;
+    uint32_t uptime_score = std::min(uptime_minutes * 100, (uint32_t)1000);  // Cap at 1000 points
+    priority += uptime_score;
+    
+    // 3. MAC address uniqueness factor (0-999 points)  
+    // Use last 2 bytes of MAC to ensure deterministic but distributed priority
+    uint16_t mac_factor = ((uint16_t)local_mac[4] << 8) | local_mac[5];
+    priority += mac_factor % 1000;  // 0-999 points based on MAC
+    
+    // 4. Hardware capabilities bonus (future expansion)
+    // Could add LED count, memory, etc. For now, just a small random factor
+    priority += (node_id % 100);  // 0-99 points based on node ID
+    
+    ESP_LOGD(TAG, "Calculated node priority: %lu (BLE:%s, uptime:%lus, mac_factor:%u)", 
+             priority, ble_connected ? "YES" : "NO", current_uptime/1000, mac_factor % 1000);
+    
+    return priority;
+}
+
+void ESPNowMeshCoordinator::startAdvancedElection() {
+    uint32_t current_time = esp_timer_get_time() / 1000;
+    
+    // Don't start election if we already have a BLE connection (automatic root)
+    if (ble_connected) {
+        ESP_LOGI(TAG, "Skipping election - BLE connection gives automatic root status");
+        return;
+    }
+    
+    // Don't start election too frequently (minimum 30 seconds between attempts)
+    if (current_time - last_election_attempt < 30000) {
+        ESP_LOGD(TAG, "Election attempt too soon, waiting...");
+        return;
+    }
+    
+    // Don't start election if we're not a client
+    if (current_role != NodeRole::MESH_CLIENT) {
+        ESP_LOGD(TAG, "Not starting election - current role is not client");
+        return;
+    }
+    
+    ESP_LOGI(TAG, "🗳️ Starting advanced autonomous root election");
+    ESP_LOGI(TAG, "Node 0x%04X priority: %lu", node_id, calculateNodePriority());
+    
+    // Initialize election state
+    election_state = ElectionState::ELECTION_DISCOVERY;
+    election_start_time = current_time;
+    last_election_attempt = current_time;
+    elected_root_node_id = 0;
+    election_candidates.clear();
+    
+    // Add ourselves as a candidate
+    ElectionCandidate self_candidate;
+    self_candidate.node_id = node_id;
+    self_candidate.priority_score = calculateNodePriority();
+    self_candidate.uptime_ms = current_time;
+    memcpy(self_candidate.mac_addr, local_mac, 6);
+    self_candidate.timestamp_received = current_time;
+    election_candidates.push_back(self_candidate);
+    
+    // Set discovery phase timeout (3-7 seconds randomized to prevent collisions)
+    uint32_t discovery_timeout = 3000 + (esp_random() % 4000);  // 3-7 seconds
+    election_phase_timeout = current_time + discovery_timeout;
+    
+    ESP_LOGI(TAG, "Election DISCOVERY phase: listening for candidates (%lu ms timeout)", discovery_timeout);
+    
+    // Send discovery announcement to let other nodes know we're starting election
+    sendElectionDiscoveryPacket();
+}
+
+void ESPNowMeshCoordinator::processElectionPacket(const ESPNowMeshPacket& packet) {
+    MeshPacketType packet_type = (MeshPacketType)packet.packet_type;
+    
+    switch (packet_type) {
+        case MeshPacketType::ELECTION_DISCOVERY:
+            processElectionDiscovery(packet);
+            break;
+        case MeshPacketType::ELECTION_CANDIDATE:
+            processElectionCandidate(packet);
+            break;
+        case MeshPacketType::ELECTION_VOTE:
+            processElectionVote(packet);
+            break;
+        case MeshPacketType::ELECTION_RESULT:
+            processElectionResult(packet);
+            break;
+        default:
+            ESP_LOGW(TAG, "Unknown election packet type: %d", packet.packet_type);
+            break;
+    }
+}
+
+void ESPNowMeshCoordinator::checkElectionTimeout() {
+    if (election_state == ElectionState::ELECTION_IDLE) {
+        return;  // No election in progress
+    }
+    
+    uint32_t current_time = esp_timer_get_time() / 1000;
+    
+    // Check if current phase has timed out
+    if (current_time >= election_phase_timeout) {
+        ESP_LOGI(TAG, "Election phase timeout - advancing to next phase");
+        advanceElectionPhase();
+    }
+}
+
+void ESPNowMeshCoordinator::advanceElectionPhase() {
+    uint32_t current_time = esp_timer_get_time() / 1000;
+    
+    switch (election_state) {
+        case ElectionState::ELECTION_DISCOVERY:
+            // Discovery phase complete - move to candidate announcement
+            ESP_LOGI(TAG, "Election phase: DISCOVERY → CANDIDATE");
+            election_state = ElectionState::ELECTION_CANDIDATE;
+            election_phase_timeout = current_time + 3000;  // 3 second candidate phase
+            sendElectionCandidatePacket();
+            break;
+            
+        case ElectionState::ELECTION_CANDIDATE:
+            // Candidate phase complete - move to voting
+            ESP_LOGI(TAG, "Election phase: CANDIDATE → VOTING");
+            election_state = ElectionState::ELECTION_VOTING;
+            election_phase_timeout = current_time + 2000;  // 2 second voting phase
+            sendElectionVotePacket();
+            break;
+            
+        case ElectionState::ELECTION_VOTING:
+            // Voting phase complete - determine winner and confirm
+            ESP_LOGI(TAG, "Election phase: VOTING → CONFIRMED");
+            election_state = ElectionState::ELECTION_CONFIRMED;
+            election_phase_timeout = current_time + 1000;  // 1 second confirmation phase
+            
+            // Determine election winner
+            if (!election_candidates.empty()) {
+                ElectionCandidate winner = selectBestCandidate();
+                elected_root_node_id = winner.node_id;
+                
+                ESP_LOGI(TAG, "🏆 Election winner: Node 0x%04X (priority: %lu)", 
+                         winner.node_id, winner.priority_score);
+                
+                // If we won, become autonomous root
+                if (winner.node_id == node_id) {
+                    ESP_LOGI(TAG, "🎉 WE WON THE ELECTION! Becoming autonomous root");
+                    transitionToRole(NodeRole::MESH_ROOT_AUTONOMOUS);
+                } else {
+                    ESP_LOGI(TAG, "Election complete - remaining as client");
+                    // We stay as client
+                }
+                
+                sendElectionResultPacket();
+            } else {
+                ESP_LOGW(TAG, "No election candidates found - election failed");
+                election_state = ElectionState::ELECTION_IDLE;
+            }
+            break;
+            
+        case ElectionState::ELECTION_CONFIRMED:
+            // Election complete
+            ESP_LOGI(TAG, "Election COMPLETE - returning to idle state");
+            election_state = ElectionState::ELECTION_IDLE;
+            break;
+            
+        default:
+            ESP_LOGW(TAG, "Unknown election state during timeout: %d", (int)election_state);
+            election_state = ElectionState::ELECTION_IDLE;
+            break;
+    }
+}
+
+// Election packet implementations
+void ESPNowMeshCoordinator::sendElectionDiscoveryPacket() {
+    ESP_LOGI(TAG, "📡 Sending election discovery packet (announcing election start)");
+    
+    // Create discovery packet with election start announcement
+    GenericPacket discovery;
+    uint8_t discovery_data[12];
+    discovery_data[0] = 0xE1; // Election discovery magic byte 1
+    discovery_data[1] = 0xEC; // Election discovery magic byte 2  
+    discovery_data[2] = 0x01; // Packet type: Discovery
+    discovery_data[3] = 0x00; // Reserved
+    discovery_data[4] = (node_id >> 8) & 0xFF; // Node ID high byte
+    discovery_data[5] = node_id & 0xFF;        // Node ID low byte
+    
+    // Election start timestamp for synchronization
+    uint32_t election_time = election_start_time;
+    discovery_data[6] = (election_time >> 24) & 0xFF;
+    discovery_data[7] = (election_time >> 16) & 0xFF;
+    discovery_data[8] = (election_time >> 8) & 0xFF;
+    discovery_data[9] = election_time & 0xFF;
+    
+    // Discovery phase timeout
+    uint32_t timeout_duration = election_phase_timeout - election_start_time;
+    discovery_data[10] = (timeout_duration >> 8) & 0xFF;
+    discovery_data[11] = timeout_duration & 0xFF;
+    
+    discovery.setData(discovery_data, sizeof(discovery_data));
+    
+    ESPNowMeshPacket packet = createMeshPacket(MeshPacketType::ELECTION_DISCOVERY, discovery, 4);
+    sendMeshPacket(packet);
+}
+
+void ESPNowMeshCoordinator::sendElectionCandidatePacket() {
+    uint32_t our_priority = calculateNodePriority();
+    uint32_t current_uptime = esp_timer_get_time() / 1000;
+    
+    ESP_LOGI(TAG, "🗳️ Sending election candidate packet (priority: %lu, uptime: %lu ms)", our_priority, current_uptime);
+    
+    // Create candidate packet with our priority information
+    GenericPacket candidate;
+    uint8_t candidate_data[20];
+    candidate_data[0] = 0xE1; // Election magic byte 1
+    candidate_data[1] = 0xEC; // Election magic byte 2
+    candidate_data[2] = 0x02; // Packet type: Candidate
+    candidate_data[3] = 0x00; // Reserved
+    
+    // Node identification
+    candidate_data[4] = (node_id >> 8) & 0xFF; // Node ID high byte
+    candidate_data[5] = node_id & 0xFF;        // Node ID low byte
+    
+    // MAC address for tiebreaker
+    memcpy(&candidate_data[6], local_mac, 6);
+    
+    // Priority score (32-bit)
+    candidate_data[12] = (our_priority >> 24) & 0xFF;
+    candidate_data[13] = (our_priority >> 16) & 0xFF;
+    candidate_data[14] = (our_priority >> 8) & 0xFF;
+    candidate_data[15] = our_priority & 0xFF;
+    
+    // Current uptime (32-bit)
+    candidate_data[16] = (current_uptime >> 24) & 0xFF;
+    candidate_data[17] = (current_uptime >> 16) & 0xFF;
+    candidate_data[18] = (current_uptime >> 8) & 0xFF;
+    candidate_data[19] = current_uptime & 0xFF;
+    
+    candidate.setData(candidate_data, sizeof(candidate_data));
+    
+    ESPNowMeshPacket packet = createMeshPacket(MeshPacketType::ELECTION_CANDIDATE, candidate, 4);
+    sendMeshPacket(packet);
+}
+
+void ESPNowMeshCoordinator::sendElectionVotePacket() {
+    // Select the best candidate from our list
+    if (election_candidates.empty()) {
+        ESP_LOGW(TAG, "No candidates to vote for - skipping vote");
+        return;
+    }
+    
+    ElectionCandidate best_candidate = selectBestCandidate();
+    ESP_LOGI(TAG, "🗳️ Sending vote for Node 0x%04X (priority: %lu)", best_candidate.node_id, best_candidate.priority_score);
+    
+    // Create vote packet
+    GenericPacket vote;
+    uint8_t vote_data[16];
+    vote_data[0] = 0xE1; // Election magic byte 1
+    vote_data[1] = 0xEC; // Election magic byte 2
+    vote_data[2] = 0x03; // Packet type: Vote
+    vote_data[3] = 0x00; // Reserved
+    
+    // Voting node identification
+    vote_data[4] = (node_id >> 8) & 0xFF; // Our node ID high byte
+    vote_data[5] = node_id & 0xFF;        // Our node ID low byte
+    
+    // Candidate we're voting for
+    vote_data[6] = (best_candidate.node_id >> 8) & 0xFF; // Voted node ID high byte
+    vote_data[7] = best_candidate.node_id & 0xFF;        // Voted node ID low byte
+    
+    // Vote reasoning - candidate's priority score
+    vote_data[8] = (best_candidate.priority_score >> 24) & 0xFF;
+    vote_data[9] = (best_candidate.priority_score >> 16) & 0xFF;
+    vote_data[10] = (best_candidate.priority_score >> 8) & 0xFF;
+    vote_data[11] = best_candidate.priority_score & 0xFF;
+    
+    // Election timestamp for vote validity
+    uint32_t vote_time = esp_timer_get_time() / 1000;
+    vote_data[12] = (vote_time >> 24) & 0xFF;
+    vote_data[13] = (vote_time >> 16) & 0xFF;
+    vote_data[14] = (vote_time >> 8) & 0xFF;
+    vote_data[15] = vote_time & 0xFF;
+    
+    vote.setData(vote_data, sizeof(vote_data));
+    
+    ESPNowMeshPacket packet = createMeshPacket(MeshPacketType::ELECTION_VOTE, vote, 4);
+    sendMeshPacket(packet);
+}
+
+void ESPNowMeshCoordinator::sendElectionResultPacket() {
+    ESP_LOGI(TAG, "🏆 Sending election result packet (winner: Node 0x%04X)", elected_root_node_id);
+    
+    // Create result packet announcing the election winner
+    GenericPacket result;
+    uint8_t result_data[16];
+    result_data[0] = 0xE1; // Election magic byte 1
+    result_data[1] = 0xEC; // Election magic byte 2
+    result_data[2] = 0x04; // Packet type: Result
+    result_data[3] = 0x00; // Reserved
+    
+    // Announcing node identification
+    result_data[4] = (node_id >> 8) & 0xFF; // Our node ID high byte
+    result_data[5] = node_id & 0xFF;        // Our node ID low byte
+    
+    // Election winner
+    result_data[6] = (elected_root_node_id >> 8) & 0xFF; // Winner node ID high byte
+    result_data[7] = elected_root_node_id & 0xFF;        // Winner node ID low byte
+    
+    // Election completion timestamp
+    uint32_t completion_time = esp_timer_get_time() / 1000;
+    result_data[8] = (completion_time >> 24) & 0xFF;
+    result_data[9] = (completion_time >> 16) & 0xFF;
+    result_data[10] = (completion_time >> 8) & 0xFF;
+    result_data[11] = completion_time & 0xFF;
+    
+    // Total election duration
+    uint32_t election_duration = completion_time - election_start_time;
+    result_data[12] = (election_duration >> 24) & 0xFF;
+    result_data[13] = (election_duration >> 16) & 0xFF;
+    result_data[14] = (election_duration >> 8) & 0xFF;
+    result_data[15] = election_duration & 0xFF;
+    
+    result.setData(result_data, sizeof(result_data));
+    
+    ESPNowMeshPacket packet = createMeshPacket(MeshPacketType::ELECTION_RESULT, result, 4);
+    sendMeshPacket(packet);
+}
+
+void ESPNowMeshCoordinator::processElectionDiscovery(const ESPNowMeshPacket& packet) {
+    if (packet.data_len < 12) {
+        ESP_LOGW(TAG, "Invalid discovery packet size: %d < 12", packet.data_len);
+        return;
+    }
+    
+    // Extract source node information
+    uint16_t source_node_id = (packet.source_mac[4] << 8) | packet.source_mac[5];
+    uint16_t announced_node_id = (packet.data[4] << 8) | packet.data[5];
+    
+    ESP_LOGI(TAG, "📡 Processing election discovery from Node 0x%04X (announced: 0x%04X)", source_node_id, announced_node_id);
+    
+    // Validate packet format
+    if (packet.data[0] != 0xE1 || packet.data[1] != 0xEC || packet.data[2] != 0x01) {
+        ESP_LOGW(TAG, "Invalid discovery packet format");
+        return;
+    }
+    
+    // If we're not in an election and someone else is starting one, consider joining
+    if (election_state == ElectionState::ELECTION_IDLE && current_role == NodeRole::MESH_CLIENT) {
+        // Random decision to join election (prevents all nodes joining every election)
+        if ((esp_random() % 100) < 70) { // 70% chance to join
+            ESP_LOGI(TAG, "Joining election started by Node 0x%04X", source_node_id);
+            startAdvancedElection();
+        } else {
+            ESP_LOGI(TAG, "Ignoring election started by Node 0x%04X (random backoff)", source_node_id);
+        }
+    } else if (election_state != ElectionState::ELECTION_IDLE) {
+        ESP_LOGI(TAG, "Already in election - synchronizing with Node 0x%04X", source_node_id);
+    }
+}
+
+void ESPNowMeshCoordinator::processElectionCandidate(const ESPNowMeshPacket& packet) {
+    if (packet.data_len < 20) {
+        ESP_LOGW(TAG, "Invalid candidate packet size: %d < 20", packet.data_len);
+        return;
+    }
+    
+    // Validate packet format
+    if (packet.data[0] != 0xE1 || packet.data[1] != 0xEC || packet.data[2] != 0x02) {
+        ESP_LOGW(TAG, "Invalid candidate packet format");
+        return;
+    }
+    
+    // Extract candidate information
+    uint16_t candidate_node_id = (packet.data[4] << 8) | packet.data[5];
+    uint32_t priority_score = ((uint32_t)packet.data[12] << 24) |
+                              ((uint32_t)packet.data[13] << 16) |
+                              ((uint32_t)packet.data[14] << 8) |
+                              ((uint32_t)packet.data[15]);
+    uint32_t uptime_ms = ((uint32_t)packet.data[16] << 24) |
+                         ((uint32_t)packet.data[17] << 16) |
+                         ((uint32_t)packet.data[18] << 8) |
+                         ((uint32_t)packet.data[19]);
+    
+    ESP_LOGI(TAG, "🗳️ Processing candidate Node 0x%04X (priority: %lu, uptime: %lu ms)", 
+             candidate_node_id, priority_score, uptime_ms);
+    
+    // Only process candidates if we're in the right election phase
+    if (election_state != ElectionState::ELECTION_CANDIDATE && election_state != ElectionState::ELECTION_VOTING) {
+        ESP_LOGD(TAG, "Ignoring candidate - not in candidate/voting phase");
+        return;
+    }
+    
+    // Check if we already have this candidate
+    for (auto& candidate : election_candidates) {
+        if (candidate.node_id == candidate_node_id) {
+            // Update existing candidate with newer information
+            candidate.priority_score = priority_score;
+            candidate.uptime_ms = uptime_ms;
+            candidate.timestamp_received = esp_timer_get_time() / 1000;
+            memcpy(candidate.mac_addr, &packet.data[6], 6);
+            ESP_LOGD(TAG, "Updated existing candidate Node 0x%04X", candidate_node_id);
+            return;
+        }
+    }
+    
+    // Add new candidate to our list
+    ElectionCandidate new_candidate;
+    new_candidate.node_id = candidate_node_id;
+    new_candidate.priority_score = priority_score;
+    new_candidate.uptime_ms = uptime_ms;
+    new_candidate.timestamp_received = esp_timer_get_time() / 1000;
+    memcpy(new_candidate.mac_addr, &packet.data[6], 6);
+    
+    election_candidates.push_back(new_candidate);
+    ESP_LOGI(TAG, "Added new candidate Node 0x%04X (total candidates: %zu)", candidate_node_id, election_candidates.size());
+}
+
+void ESPNowMeshCoordinator::processElectionVote(const ESPNowMeshPacket& packet) {
+    if (packet.data_len < 16) {
+        ESP_LOGW(TAG, "Invalid vote packet size: %d < 16", packet.data_len);
+        return;
+    }
+    
+    // Validate packet format
+    if (packet.data[0] != 0xE1 || packet.data[1] != 0xEC || packet.data[2] != 0x03) {
+        ESP_LOGW(TAG, "Invalid vote packet format");
+        return;
+    }
+    
+    // Extract vote information
+    uint16_t voting_node_id = (packet.data[4] << 8) | packet.data[5];
+    uint16_t voted_for_node_id = (packet.data[6] << 8) | packet.data[7];
+    uint32_t candidate_priority = ((uint32_t)packet.data[8] << 24) |
+                                  ((uint32_t)packet.data[9] << 16) |
+                                  ((uint32_t)packet.data[10] << 8) |
+                                  ((uint32_t)packet.data[11]);
+    
+    ESP_LOGI(TAG, "🗳️ Processing vote from Node 0x%04X for Node 0x%04X (priority: %lu)", 
+             voting_node_id, voted_for_node_id, candidate_priority);
+    
+    // Only process votes if we're in voting phase
+    if (election_state != ElectionState::ELECTION_VOTING) {
+        ESP_LOGD(TAG, "Ignoring vote - not in voting phase");
+        return;
+    }
+    
+    // Note: In this implementation, votes are primarily informational
+    // The actual winner is determined by objective priority comparison
+    // Votes can be used for validation and consensus verification
+    
+    // Log the vote for debugging and potential future consensus features
+    ESP_LOGI(TAG, "Vote recorded: Node 0x%04X → Node 0x%04X", voting_node_id, voted_for_node_id);
+    
+    // Future enhancement: Could track vote counts for consensus validation
+    // For now, we rely on deterministic priority-based selection
+}
+
+void ESPNowMeshCoordinator::processElectionResult(const ESPNowMeshPacket& packet) {
+    if (packet.data_len < 16) {
+        ESP_LOGW(TAG, "Invalid result packet size: %d < 16", packet.data_len);
+        return;
+    }
+    
+    // Validate packet format
+    if (packet.data[0] != 0xE1 || packet.data[1] != 0xEC || packet.data[2] != 0x04) {
+        ESP_LOGW(TAG, "Invalid result packet format");
+        return;
+    }
+    
+    // Extract result information
+    uint16_t announcing_node_id = (packet.data[4] << 8) | packet.data[5];
+    uint16_t winner_node_id = (packet.data[6] << 8) | packet.data[7];
+    uint32_t election_duration = ((uint32_t)packet.data[12] << 24) |
+                                 ((uint32_t)packet.data[13] << 16) |
+                                 ((uint32_t)packet.data[14] << 8) |
+                                 ((uint32_t)packet.data[15]);
+    
+    ESP_LOGI(TAG, "🏆 Processing election result from Node 0x%04X: Winner is Node 0x%04X (duration: %lu ms)", 
+             announcing_node_id, winner_node_id, election_duration);
+    
+    // Accept the election result if we were participating
+    if (election_state != ElectionState::ELECTION_IDLE) {
+        ESP_LOGI(TAG, "Accepting election result: Node 0x%04X is the new autonomous root", winner_node_id);
+        
+        // If we won but didn't know it, become autonomous root
+        if (winner_node_id == node_id && current_role == NodeRole::MESH_CLIENT) {
+            ESP_LOGI(TAG, "🎉 Election result confirms we are the winner - becoming autonomous root");
+            transitionToRole(NodeRole::MESH_ROOT_AUTONOMOUS);
+        }
+        // If someone else won, make sure we're a client
+        else if (winner_node_id != node_id && current_role == NodeRole::MESH_ROOT_AUTONOMOUS) {
+            ESP_LOGI(TAG, "Election result shows Node 0x%04X won - stepping down to client", winner_node_id);
+            transitionToRole(NodeRole::MESH_CLIENT);
+        }
+        
+        // End our election participation
+        election_state = ElectionState::ELECTION_IDLE;
+        elected_root_node_id = winner_node_id;
+        
+        // Reset election timer to prevent immediate new election
+        election_timer = esp_timer_get_time() / 1000 + 60000; // Wait 60 seconds
+        
+        ESP_LOGI(TAG, "Election participation ended - new root: Node 0x%04X", winner_node_id);
+    } else {
+        ESP_LOGI(TAG, "Election result received but we weren't participating");
+    }
+}
+
+ESPNowMeshCoordinator::ElectionCandidate ESPNowMeshCoordinator::selectBestCandidate() const {
+    if (election_candidates.empty()) {
+        // Return a default candidate if none exist
+        ElectionCandidate default_candidate = {};
+        return default_candidate;
+    }
+    
+    // Find candidate with highest priority (using the < operator defined in struct)
+    auto best_candidate = election_candidates[0];
+    for (const auto& candidate : election_candidates) {
+        if (candidate < best_candidate) {  // < operator means higher priority
+            best_candidate = candidate;
+        }
+    }
+    
+    return best_candidate;
 }

@@ -159,6 +159,9 @@ extern "C" void app_main(void) {
         // Check for autonomous root election
         meshCoordinator.checkForRootElection();
         
+        // Check election timeout for advanced election system
+        meshCoordinator.checkElectionTimeout();
+        
         // Root nodes send periodic announcements (every 5 seconds)
         // - BLE roots: Ensure autonomous roots know about superior BLE root and step down  
         // - Autonomous roots: Maintain root authority in absence of BLE root
