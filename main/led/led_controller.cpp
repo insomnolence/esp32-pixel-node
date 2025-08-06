@@ -112,10 +112,10 @@ esp_err_t LEDController::begin() {
     return ESP_OK;
 }
 
-bool LEDController::processPacket(const GenericPacket& packet) {
+esp_err_t LEDController::processPacket(const GenericPacket& packet) {
     if (!initialized) {
         ESP_LOGW(TAG, "LED Controller not initialized");
-        return false;
+        return ESP_ERR_INVALID_STATE;
     }
     
     ESP_LOGI(TAG, "Processing LED packet (%zu bytes)", packet.getLength());
@@ -123,9 +123,10 @@ bool LEDController::processPacket(const GenericPacket& packet) {
     // Parse the packet into our Packet structure
     // Create a local copy for parsing to maintain const correctness
     Packet tempPacket;
-    if (!parsePacketData(packet, tempPacket)) {
-        ESP_LOGE(TAG, "Failed to parse packet data");
-        return false;
+    esp_err_t ret = parsePacketData(packet, tempPacket);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to parse packet data: %s", esp_err_to_name(ret));
+        return ret;
     }
     
     // Copy parsed data to member variable
@@ -137,19 +138,36 @@ bool LEDController::processPacket(const GenericPacket& packet) {
     player->SetSequence(packetSequence);
     
     ESP_LOGI(TAG, "✅ LED packet processed successfully");
-    return true;
+    return ESP_OK;
 }
 
-bool LEDController::parsePacketData(const GenericPacket& packet, Packet& parsedPacket) const {
+esp_err_t LEDController::parsePacketData(const GenericPacket& packet, Packet& parsedPacket) const {
+    // Bounds check: ensure packet is not empty or excessively large
+    size_t packet_len = packet.getLength();
+    if (packet_len == 0) {
+        ESP_LOGE(TAG, "Empty packet received");
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (packet_len > 256) { // Reasonable upper bound
+        ESP_LOGE(TAG, "Packet too large: %zu bytes", packet_len);
+        return ESP_ERR_INVALID_SIZE;
+    }
+    
     // Try exact size match first (struct alignment)
     if (packet.getPacket(parsedPacket)) {
         ESP_LOGI(TAG, "✅ Exact packet format match");
-        return true;
+        return ESP_OK;
     } 
     // Handle 19-byte packets manually (mobile app format)
     else if (packet.getLength() == 19) {
         ESP_LOGI(TAG, "📱 Manual parsing of 19-byte mobile app packet");
         const uint8_t* data = packet.getData();
+        
+        // Additional safety: verify data pointer is valid
+        if (!data) {
+            ESP_LOGE(TAG, "Null data pointer in packet");
+            return ESP_ERR_INVALID_ARG;
+        }
         
         // Parse the packet manually (little-endian format expected)
         parsedPacket.command = data[0];
@@ -157,22 +175,22 @@ bool LEDController::parsePacketData(const GenericPacket& packet, Packet& parsedP
         parsedPacket.speed = data[2];
         parsedPacket.pattern = data[3];
         
-        // Parse color array (3 x uint32_t = 12 bytes)
+        // Parse color array (3 x uint32_t = 12 bytes) - bounds are guaranteed by length check
         memcpy(&parsedPacket.color[0], &data[4], 4);
         memcpy(&parsedPacket.color[1], &data[8], 4);
         memcpy(&parsedPacket.color[2], &data[12], 4);
         
-        // Parse level array (3 x uint8_t = 3 bytes)  
+        // Parse level array (3 x uint8_t = 3 bytes) - bounds are guaranteed by length check
         parsedPacket.level[0] = data[16];
         parsedPacket.level[1] = data[17];
         parsedPacket.level[2] = data[18];
         
         ESP_LOGI(TAG, "🔧 Manual parsing complete");
-        return true;
+        return ESP_OK;
     } 
     else {
         ESP_LOGE(TAG, "❌ Unsupported packet size: %zu bytes", packet.getLength());
-        return false;
+        return ESP_ERR_INVALID_SIZE;
     }
 }
 

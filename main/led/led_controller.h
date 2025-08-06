@@ -30,7 +30,7 @@ public:
     esp_err_t begin();
     
     // Process packets from BLE/mesh
-    bool processPacket(const GenericPacket& packet);
+    esp_err_t processPacket(const GenericPacket& packet);
     
     // Manual sequence control
     void setIdleMode();
@@ -65,7 +65,7 @@ private:
     static const char* TAG;
     
     // Helper methods
-    bool parsePacketData(const GenericPacket& packet, Packet& parsedPacket) const;
+    esp_err_t parsePacketData(const GenericPacket& packet, Packet& parsedPacket) const;
     void logPacketInfo(const Packet& pkt) const;
     void cleanup(); // Clean up allocated resources on failure
 };

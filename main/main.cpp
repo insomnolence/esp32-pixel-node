@@ -75,10 +75,11 @@ extern "C" void app_main(void) {
         ESP_LOGI(MAIN_TAG, "🌈 LED Pattern Received: %s (%zu bytes)", format_info, packet.getLength());
         
         // Process the packet with our LED controller
-        if (ledController.processPacket(packet)) {
+        esp_err_t ret = ledController.processPacket(packet);
+        if (ret == ESP_OK) {
             ESP_LOGI(MAIN_TAG, "✅ LED pattern applied successfully");
         } else {
-            ESP_LOGW(MAIN_TAG, "❌ Failed to apply LED pattern");
+            ESP_LOGW(MAIN_TAG, "❌ Failed to apply LED pattern: %s", esp_err_to_name(ret));
         }
     });
     
