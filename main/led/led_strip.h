@@ -45,6 +45,7 @@ private:
     const uint8_t strip_type;      // Const - never changes after construction
     uint8_t brightness_level;
     uint32_t* pixel_buffer;
+    uint8_t* grb_buffer;           // Pre-allocated GRB conversion buffer (pixel_count * 3 bytes)
     
     // Internal helpers
     esp_err_t initRMT();

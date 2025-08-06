@@ -27,6 +27,7 @@ LEDStrip::LEDStrip(uint16_t pixels, uint8_t pin, uint8_t type)
     , strip_type(type)
     , brightness_level(255)
     , pixel_buffer(nullptr)
+    , grb_buffer(nullptr)
 {
     // Validate parameters
     if (pixels == 0) {
@@ -41,6 +42,15 @@ LEDStrip::LEDStrip(uint16_t pixels, uint8_t pin, uint8_t type)
         return;
     }
     memset(pixel_buffer, 0, pixel_count * sizeof(uint32_t));
+    
+    // Allocate GRB conversion buffer (persistent for lifetime)
+    grb_buffer = new(std::nothrow) uint8_t[pixel_count * 3];
+    if (!grb_buffer) {
+        ESP_LOGE(TAG, "Failed to allocate GRB buffer for %d pixels", pixel_count);
+        delete[] pixel_buffer;
+        pixel_buffer = nullptr;
+        return;
+    }
     
     // Initialize transmit config
     tx_config = {
@@ -58,12 +68,17 @@ LEDStrip::~LEDStrip() {
         rmt_del_encoder(led_encoder);
     }
     delete[] pixel_buffer;
+    delete[] grb_buffer;
 }
 
 esp_err_t LEDStrip::begin() {
-    // Check if pixel buffer was allocated successfully
+    // Check if buffers were allocated successfully
     if (!pixel_buffer) {
         ESP_LOGE(TAG, "Cannot initialize LED strip: pixel buffer allocation failed");
+        return ESP_ERR_NO_MEM;
+    }
+    if (!grb_buffer) {
+        ESP_LOGE(TAG, "Cannot initialize LED strip: GRB buffer allocation failed");
         return ESP_ERR_NO_MEM;
     }
     
@@ -130,10 +145,10 @@ esp_err_t LEDStrip::show() {
         return ESP_ERR_INVALID_STATE;
     }
     
-    // Convert RGB to GRB format for WS2812
-    uint8_t* grb_buffer = new uint8_t[pixel_count * 3];
+    // Convert RGB to GRB format for WS2812 (using pre-allocated buffer)
     if (!grb_buffer) {
-        return ESP_ERR_NO_MEM;
+        ESP_LOGE(TAG, "GRB buffer not allocated");
+        return ESP_ERR_INVALID_STATE;
     }
     
     for (uint16_t i = 0; i < pixel_count; i++) {
@@ -145,8 +160,6 @@ esp_err_t LEDStrip::show() {
     
     // Transmit data
     esp_err_t ret = rmt_transmit(rmt_channel, led_encoder, grb_buffer, pixel_count * 3, &tx_config);
-    
-    delete[] grb_buffer;
     
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "RMT transmit failed: %s", esp_err_to_name(ret));
