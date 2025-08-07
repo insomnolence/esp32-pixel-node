@@ -44,6 +44,7 @@ void PixelPacketProfile::gattsEventHandler(esp_gatts_cb_event_t event, esp_gatt_
             if (ble_connection_callback) {
                 ESP_LOGI(TAG, "🔥 Calling BLE connection callback (connected=true)");
                 ble_connection_callback(true);
+                ESP_LOGI(TAG, "🔥 BLE connection callback completed successfully");
             } else {
                 ESP_LOGW(TAG, "🔥 No BLE connection callback set!");
             }
@@ -54,6 +55,7 @@ void PixelPacketProfile::gattsEventHandler(esp_gatts_cb_event_t event, esp_gatt_
             if (ble_connection_callback) {
                 ESP_LOGI(TAG, "🔥 Calling BLE connection callback (connected=false)");
                 ble_connection_callback(false);
+                ESP_LOGI(TAG, "🔥 BLE disconnection callback completed successfully");
             } else {
                 ESP_LOGW(TAG, "🔥 No BLE connection callback set!");
             }

@@ -171,24 +171,30 @@ esp_err_t ESPNowMeshCoordinator::stop() {
 }
 
 void ESPNowMeshCoordinator::onBleConnected() {
-    ESP_LOGI(TAG, "BLE connected - becoming mesh root with mobile control");
+    ESP_LOGI(TAG, "🔥 BLE connected - becoming mesh root with mobile control (Node 0x%04X)", node_id);
+    ESP_LOGI(TAG, "🔥 Previous role: %s", getRoleString());
+    
     ble_connected = true;
     
     // Record BLE connection timestamp for priority comparison
     ble_connection_uptime_ms = esp_timer_get_time() / 1000;
     has_ble_connection_timestamp = true;
     
-    ESP_LOGI(TAG, "BLE connection timestamp recorded: uptime %lu ms", ble_connection_uptime_ms);
+    ESP_LOGI(TAG, "🔥 BLE connection timestamp recorded: uptime %lu ms", ble_connection_uptime_ms);
     
     // BLE connection always takes priority over autonomous root
     if (current_role == NodeRole::MESH_ROOT_AUTONOMOUS) {
-        ESP_LOGI(TAG, "Upgrading from autonomous root to BLE-controlled root");
+        ESP_LOGI(TAG, "🔥 Upgrading from autonomous root to BLE-controlled root");
     }
     
+    ESP_LOGI(TAG, "🔥 Transitioning to MESH_ROOT_ACTIVE role");
     transitionToRole(NodeRole::MESH_ROOT_ACTIVE);
+    ESP_LOGI(TAG, "🔥 Role transition complete: %s", getRoleString());
     
     // Immediately announce BLE root status to make other autonomous roots step down
+    ESP_LOGI(TAG, "🔥 Sending immediate BLE root announcement to mesh");
     sendRootAnnouncement();
+    ESP_LOGI(TAG, "🔥 BLE root announcement sent - other autonomous roots should step down");
 }
 
 void ESPNowMeshCoordinator::onBleDisconnected() {
@@ -434,6 +440,9 @@ void ESPNowMeshCoordinator::handleReceivedPacket(const uint8_t *mac_addr, const 
         case MeshPacketType::ELECTION_CANDIDATE:
         case MeshPacketType::ELECTION_VOTE:
         case MeshPacketType::ELECTION_RESULT:
+            // CRITICAL: Forward election packets for multi-hop election coordination
+            forwardPacket(*mesh_packet);
+            
             // Process advanced election packets
             processElectionPacket(*mesh_packet);
             break;
@@ -441,8 +450,13 @@ void ESPNowMeshCoordinator::handleReceivedPacket(const uint8_t *mac_addr, const 
         case MeshPacketType::ROOT_ANNOUNCEMENT:
             ESP_LOGI(TAG, "Root announcement received from node 0x%04X", 
                      (mesh_packet->source_mac[4] << 8) | mesh_packet->source_mac[5]);
+            
+            // CRITICAL: Forward root announcements to ensure all nodes in multi-hop network receive them
+            forwardPacket(*mesh_packet);
+            
             heard_from_root = true;
             last_root_announcement = esp_timer_get_time() / 1000;
+            ESP_LOGD(TAG, "Updated last_root_announcement to %lu ms (heard_from_root=true)", last_root_announcement);
             
             // Process root announcement with BLE priority comparison
             if (mesh_packet->data_len >= 8) {
@@ -584,15 +598,49 @@ void ESPNowMeshCoordinator::checkForRootElection() {
         return;
     }
     
+    // BLE-connected nodes should not start autonomous root elections
+    if (ble_connected) {
+        ESP_LOGD(TAG, "Skipping root election - node has BLE connection");
+        return;
+    }
+    
     // Check if we haven't heard from any root recently
     if (current_time - last_root_announcement > 30000) { // 30 seconds without root
+        ESP_LOGD(TAG, "Root timeout: current=%lu, last_root=%lu, diff=%lu ms", 
+                 current_time, last_root_announcement, current_time - last_root_announcement);
         heard_from_root = false;
     }
     
-    // If election timer expired and no root heard, start advanced election
+    // If election timer expired and no root heard, check for single node scenario
     if (current_time >= election_timer && !heard_from_root && !ble_connected) {
-        ESP_LOGI(TAG, "No root detected for 30+ seconds - starting advanced election system");
-        startAdvancedElection();
+        ESP_LOGI(TAG, "🗳️ No root detected for 30+ seconds - checking for other nodes (Node 0x%04X, BLE: %s, Role: %s)", 
+                 node_id, ble_connected ? "connected" : "disconnected", getRoleString());
+        
+        // Send discovery packet to check for other nodes
+        sendElectionDiscoveryPacket();
+        
+        // Brief wait to allow other nodes to respond
+        uint32_t discovery_start = esp_timer_get_time() / 1000;
+        while ((esp_timer_get_time() / 1000 - discovery_start) < 2000) {
+            vTaskDelay(pdMS_TO_TICKS(100)); // Check every 100ms for 2 seconds
+            if (heard_from_root) {
+                ESP_LOGI(TAG, "Other nodes detected during discovery - not alone");
+                break;
+            }
+        }
+        
+        // If still no root heard, likely single node - become autonomous root immediately  
+        if (!heard_from_root) {
+            ESP_LOGI(TAG, "🗳️ Single node scenario detected - becoming autonomous root");
+            transitionToRole(NodeRole::MESH_ROOT_AUTONOMOUS);
+            sendRootAnnouncement();
+        } else {
+            ESP_LOGI(TAG, "Other nodes detected - starting full advanced election");
+            startAdvancedElection();
+        }
+        
+        // Reset election timer to prevent immediate re-triggering
+        election_timer = current_time + 60000; // Wait 60 seconds before next election attempt
     }
 }
 
@@ -736,13 +784,20 @@ void ESPNowMeshCoordinator::startAdvancedElection() {
     
     // Don't start election too frequently (minimum 30 seconds between attempts)
     if (current_time - last_election_attempt < 30000) {
-        ESP_LOGD(TAG, "Election attempt too soon, waiting...");
+        ESP_LOGD(TAG, "Election attempt too soon - last attempt %lu ms ago, waiting...", 
+                 current_time - last_election_attempt);
         return;
     }
     
     // Don't start election if we're not a client
     if (current_role != NodeRole::MESH_CLIENT) {
         ESP_LOGD(TAG, "Not starting election - current role is not client");
+        return;
+    }
+    
+    // Don't start election if one is already in progress
+    if (election_state != ElectionState::ELECTION_IDLE) {
+        ESP_LOGD(TAG, "Election already in progress (state: %d) - skipping", (int)election_state);
         return;
     }
     
@@ -770,6 +825,7 @@ void ESPNowMeshCoordinator::startAdvancedElection() {
     election_phase_timeout = current_time + discovery_timeout;
     
     ESP_LOGI(TAG, "Election DISCOVERY phase: listening for candidates (%lu ms timeout)", discovery_timeout);
+    ESP_LOGI(TAG, "🗳️ Election initialized: state=DISCOVERY, timeout=%lu, self_candidate added", election_phase_timeout);
     
     // Send discovery announcement to let other nodes know we're starting election
     sendElectionDiscoveryPacket();
@@ -804,9 +860,19 @@ void ESPNowMeshCoordinator::checkElectionTimeout() {
     
     uint32_t current_time = esp_timer_get_time() / 1000;
     
+    // Optional debug logging during election (only if needed for troubleshooting)
+    static uint32_t last_election_debug = 0;
+    if (current_time - last_election_debug > 5000) {  // Log every 5 seconds during election (reduced frequency)
+        ESP_LOGD(TAG, "Election in progress: state=%d, timeout in %ld ms, candidates=%zu", 
+                 (int)election_state, 
+                 election_phase_timeout > current_time ? election_phase_timeout - current_time : 0,
+                 election_candidates.size());
+        last_election_debug = current_time;
+    }
+    
     // Check if current phase has timed out
     if (current_time >= election_phase_timeout) {
-        ESP_LOGI(TAG, "Election phase timeout - advancing to next phase");
+        ESP_LOGI(TAG, "Election phase timeout - advancing to next phase (current: %d)", (int)election_state);
         advanceElectionPhase();
     }
 }
@@ -1049,15 +1115,43 @@ void ESPNowMeshCoordinator::processElectionDiscovery(const ESPNowMeshPacket& pac
     
     // If we're not in an election and someone else is starting one, consider joining
     if (election_state == ElectionState::ELECTION_IDLE && current_role == NodeRole::MESH_CLIENT) {
-        // Random decision to join election (prevents all nodes joining every election)
-        if ((esp_random() % 100) < 70) { // 70% chance to join
-            ESP_LOGI(TAG, "Joining election started by Node 0x%04X", source_node_id);
-            startAdvancedElection();
-        } else {
-            ESP_LOGI(TAG, "Ignoring election started by Node 0x%04X (random backoff)", source_node_id);
-        }
+        // Always join elections to ensure single root selection
+        ESP_LOGI(TAG, "🗳️ Joining election started by Node 0x%04X - synchronizing election state", source_node_id);
+        
+        // JOIN the existing election (don't start our own!)
+        uint32_t current_time = esp_timer_get_time() / 1000;
+        election_state = ElectionState::ELECTION_DISCOVERY;
+        election_start_time = current_time;
+        last_election_attempt = current_time;
+        elected_root_node_id = 0;
+        election_candidates.clear();
+        
+        // Add ourselves as a candidate
+        ElectionCandidate self_candidate;
+        self_candidate.node_id = node_id;
+        self_candidate.priority_score = calculateNodePriority();
+        self_candidate.uptime_ms = current_time;
+        memcpy(self_candidate.mac_addr, local_mac, 6);
+        self_candidate.timestamp_received = current_time;
+        election_candidates.push_back(self_candidate);
+        
+        // Add the election starter as a candidate
+        ElectionCandidate starter_candidate;
+        starter_candidate.node_id = source_node_id;
+        starter_candidate.priority_score = 0; // Will be updated when they send candidate packet
+        starter_candidate.uptime_ms = current_time;
+        memcpy(starter_candidate.mac_addr, packet.source_mac, 6);
+        starter_candidate.timestamp_received = current_time;
+        election_candidates.push_back(starter_candidate);
+        
+        // Set discovery phase timeout (shorter since election already started)
+        uint32_t remaining_discovery_time = 2000 + (esp_random() % 2000); // 2-4 seconds remaining
+        election_phase_timeout = current_time + remaining_discovery_time;
+        
+        ESP_LOGI(TAG, "🗳️ Joined election: state=DISCOVERY, timeout=%lu, candidates=%zu", 
+                 election_phase_timeout, election_candidates.size());
     } else if (election_state != ElectionState::ELECTION_IDLE) {
-        ESP_LOGI(TAG, "Already in election - synchronizing with Node 0x%04X", source_node_id);
+        ESP_LOGI(TAG, "Already in election - acknowledging Node 0x%04X", source_node_id);
     }
 }
 
@@ -1190,10 +1284,15 @@ void ESPNowMeshCoordinator::processElectionResult(const ESPNowMeshPacket& packet
             ESP_LOGI(TAG, "🎉 Election result confirms we are the winner - becoming autonomous root");
             transitionToRole(NodeRole::MESH_ROOT_AUTONOMOUS);
         }
-        // If someone else won, make sure we're a client
-        else if (winner_node_id != node_id && current_role == NodeRole::MESH_ROOT_AUTONOMOUS) {
-            ESP_LOGI(TAG, "Election result shows Node 0x%04X won - stepping down to client", winner_node_id);
-            transitionToRole(NodeRole::MESH_CLIENT);
+        // If someone else won, make sure we're a client (regardless of current role)
+        else if (winner_node_id != node_id) {
+            if (current_role != NodeRole::MESH_CLIENT) {
+                ESP_LOGI(TAG, "Election result shows Node 0x%04X won - stepping down to client (was %s)", 
+                         winner_node_id, getRoleString());
+                transitionToRole(NodeRole::MESH_CLIENT);
+            } else {
+                ESP_LOGI(TAG, "Election result shows Node 0x%04X won - we remain client", winner_node_id);
+            }
         }
         
         // End our election participation

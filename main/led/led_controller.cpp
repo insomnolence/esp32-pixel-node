@@ -365,7 +365,8 @@ void LEDController::shutdownDualCore() {
     ESP_LOGI(TAG, "Shutting down dual-core LED processing");
     
     // Send shutdown command to LED task
-    LEDCommand shutdownCmd = {.type = LEDCommandType::SHUTDOWN};
+    LEDCommand shutdownCmd;
+    shutdownCmd.type = LEDCommandType::SHUTDOWN;
     sendLEDCommand(shutdownCmd, pdMS_TO_TICKS(1000));
     
     // Wait for task to complete

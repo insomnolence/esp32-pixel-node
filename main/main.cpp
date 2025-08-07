@@ -96,7 +96,9 @@ extern "C" void app_main(void) {
     meshCoordinator.setRoleChangeCallback([&meshCoordinator](NodeRole old_role, NodeRole new_role) {
         ESP_LOGI(MAIN_TAG, "LED Mesh role changed from %d to %d", (int)old_role, (int)new_role);
         if (new_role == NodeRole::MESH_ROOT_ACTIVE) {
-            ESP_LOGI(MAIN_TAG, "Now MESH ROOT - accepting BLE commands and distributing LED patterns");
+            ESP_LOGI(MAIN_TAG, "Now MESH ROOT (BLE) - accepting BLE commands and distributing LED patterns");
+        } else if (new_role == NodeRole::MESH_ROOT_AUTONOMOUS) {
+            ESP_LOGI(MAIN_TAG, "Now MESH ROOT (Autonomous) - distributing LED patterns without BLE");
         } else {
             ESP_LOGI(MAIN_TAG, "Now MESH CLIENT - receiving LED patterns from root");
         }
@@ -105,11 +107,17 @@ extern "C" void app_main(void) {
     // Set up BLE connection callbacks to notify mesh coordinator
     pixel_packet_profile->setBleConnectionCallback([&meshCoordinator](bool connected) {
         if (connected) {
-            ESP_LOGI(MAIN_TAG, "Mobile phone connected via BLE - becoming LED mesh root");
+            ESP_LOGI(MAIN_TAG, "🔥 Mobile phone connected via BLE - becoming LED mesh root (Node 0x%04X)", 
+                     meshCoordinator.getNodeId());
             meshCoordinator.onBleConnected();
+            ESP_LOGI(MAIN_TAG, "🔥 BLE connection processing complete - new role: %s", 
+                     meshCoordinator.getRoleString());
         } else {
-            ESP_LOGI(MAIN_TAG, "Mobile phone disconnected - stepping down from root role");
+            ESP_LOGI(MAIN_TAG, "🔥 Mobile phone disconnected - stepping down from root role (Node 0x%04X)", 
+                     meshCoordinator.getNodeId());
             meshCoordinator.onBleDisconnected();
+            ESP_LOGI(MAIN_TAG, "🔥 BLE disconnection processing complete - new role: %s", 
+                     meshCoordinator.getRoleString());
         }
     });
 
@@ -159,8 +167,12 @@ extern "C" void app_main(void) {
         // Check for autonomous root election
         meshCoordinator.checkForRootElection();
         
-        // Check election timeout for advanced election system
-        meshCoordinator.checkElectionTimeout();
+        // Check election timeout for advanced election system (optimized: every 100ms vs 15ms)
+        static uint32_t lastElectionTimeoutCheck = 0;
+        if (now - lastElectionTimeoutCheck >= 100) { // Check every 100ms instead of 15ms
+            meshCoordinator.checkElectionTimeout();
+            lastElectionTimeoutCheck = now;
+        }
         
         // Root nodes send periodic announcements (every 5 seconds)
         // - BLE roots: Ensure autonomous roots know about superior BLE root and step down  
