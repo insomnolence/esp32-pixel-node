@@ -14,20 +14,16 @@ LEDController::LEDController(uint8_t pin, uint16_t count)
     , initialized(false)
     , ledPin(pin)
     , ledCount(count)
-#ifdef CONFIG_IDF_TARGET_ESP32
     , ledCommandQueue(nullptr)
     , ledTaskHandle(nullptr)
-    , dualCoreMode(false)
-#endif
+    , ledTaskMode(false)
 {
     // Initialize currentPacket to zero
     memset(&currentPacket, 0, sizeof(currentPacket));
 }
 
 LEDController::~LEDController() {
-#ifdef CONFIG_IDF_TARGET_ESP32
-    shutdownDualCore();
-#endif
+    shutdownLEDTask();
     cleanup();
 }
 
@@ -114,18 +110,18 @@ esp_err_t LEDController::begin() {
     
     initialized = true;
     
+    // Initialize LED task processing (works on both ESP32 and ESP32C3)
+    esp_err_t led_task_result = initLEDTask();
+    if (led_task_result == ESP_OK) {
 #ifdef CONFIG_IDF_TARGET_ESP32
-    // Initialize dual-core processing on ESP32
-    esp_err_t dual_core_result = initDualCore();
-    if (dual_core_result == ESP_OK) {
-        ESP_LOGI(TAG, "LED Controller initialized with dual-core processing");
-    } else {
-        ESP_LOGW(TAG, "Dual-core initialization failed, falling back to single-core mode");
-        dualCoreMode = false;
-    }
+        ESP_LOGI(TAG, "LED Controller initialized with dedicated LED task on Core 1");
 #else
-    ESP_LOGI(TAG, "LED Controller initialized (single-core mode for ESP32C3)");
+        ESP_LOGI(TAG, "LED Controller initialized with high-priority LED task on Core 0");
 #endif
+    } else {
+        ESP_LOGW(TAG, "LED task initialization failed, falling back to main loop mode");
+        ledTaskMode = false;
+    }
     
     // Start with idle sequence (after dual-core init if applicable)
     setSequence(idleSequence);
@@ -250,9 +246,8 @@ void LEDController::setRandomMode() {
 void LEDController::setSequence(Sequence* sequence) {
     if (!initialized || !sequence) return;
     
-#ifdef CONFIG_IDF_TARGET_ESP32
-    if (dualCoreMode) {
-        // Send sequence change command to LED task on Core 1
+    if (ledTaskMode) {
+        // Send sequence change command to LED task
         LEDCommand cmd = {
             .type = LEDCommandType::SET_SEQUENCE,
             .data = {.setSeq = {.sequence = sequence}}
@@ -264,9 +259,8 @@ void LEDController::setSequence(Sequence* sequence) {
         }
         return;
     }
-#endif
     
-    // Single-core mode: direct call
+    // Main loop mode: direct call
     player->SetSequence(sequence);
 }
 
@@ -282,17 +276,14 @@ void LEDController::update() {
         return;
     }
     
-#ifdef CONFIG_IDF_TARGET_ESP32
-    // In dual-core mode, LED processing happens on Core 1
-    // This method becomes a no-op for LED updates
-    if (dualCoreMode) {
-        // LED processing is handled by dedicated task on Core 1
-        // Core 0 can focus on BLE/WiFi/Mesh communication
+    // In LED task mode, LED processing happens in dedicated task
+    if (ledTaskMode) {
+        // LED processing is handled by dedicated high-priority task
+        // Main loop can focus on BLE/WiFi/Mesh communication
         return;
     }
-#endif
     
-    // Single-core mode: perform LED updates on current core
+    // Main loop mode: perform LED updates on current core
     time_t now = esp_timer_get_time() / 1000; // Convert to ms
     
     // Update pattern if needed
@@ -321,29 +312,45 @@ const char* LEDController::getCurrentSequenceType() const {
     }
 }
 
-#ifdef CONFIG_IDF_TARGET_ESP32
-// Dual-core processing implementation (ESP32 only)
+// LED task processing implementation (ESP32 and ESP32C3)
 
-esp_err_t LEDController::initDualCore() {
-    ESP_LOGI(TAG, "Initializing dual-core LED processing for ESP32");
+esp_err_t LEDController::initLEDTask() {
+#ifdef CONFIG_IDF_TARGET_ESP32
+    ESP_LOGI(TAG, "Initializing LED task for ESP32 (Core 1)");
+#else
+    ESP_LOGI(TAG, "Initializing high-priority LED task for ESP32C3 (Core 0)");
+#endif
     
-    // Create command queue for inter-core communication
+    // Create command queue for main loop to LED task communication
     ledCommandQueue = xQueueCreate(10, sizeof(LEDCommand));
     if (!ledCommandQueue) {
         ESP_LOGE(TAG, "Failed to create LED command queue");
         return ESP_ERR_NO_MEM;
     }
     
-    // Create LED processing task pinned to Core 1
+    // Create LED processing task with platform-specific configuration
+#ifdef CONFIG_IDF_TARGET_ESP32
+    // ESP32: Pin to Core 1, standard priority
     BaseType_t result = xTaskCreatePinnedToCore(
-        ledProcessingTaskWrapper,    // Task function
-        "LED_Task",                  // Task name
-        4096,                        // Stack size
-        this,                        // Task parameter (this instance)
-        5,                           // Priority (high for LED processing)
-        &ledTaskHandle,              // Task handle
-        1                            // Pin to Core 1
+        ledProcessingTaskWrapper,              // Task function
+        "LED_Task",                            // Task name
+        4096,                                  // Stack size (4KB)
+        this,                                  // Task parameter (this instance)
+        10,                                    // Priority (high for LED processing)
+        &ledTaskHandle,                        // Task handle
+        1                                      // Pin to Core 1
     );
+#else
+    // ESP32C3: Core 0 with high priority (Priority 8 > mesh/BLE at Priority 1-5)
+    BaseType_t result = xTaskCreate(
+        ledProcessingTaskWrapper,              // Task function
+        "LED_Task",                            // Task name
+        4096,                                  // Stack size (4KB)
+        this,                                  // Task parameter (this instance)
+        8,                                     // High priority (8 > networking tasks)
+        &ledTaskHandle                         // Task handle
+    );
+#endif
     
     if (result != pdPASS) {
         ESP_LOGE(TAG, "Failed to create LED processing task");
@@ -352,17 +359,17 @@ esp_err_t LEDController::initDualCore() {
         return ESP_ERR_NO_MEM;
     }
     
-    dualCoreMode = true;
-    ESP_LOGI(TAG, "✅ Dual-core LED processing initialized successfully");
+    ledTaskMode = true;
+    ESP_LOGI(TAG, "✅ LED task processing initialized successfully");
     return ESP_OK;
 }
 
-void LEDController::shutdownDualCore() {
-    if (!dualCoreMode) {
+void LEDController::shutdownLEDTask() {
+    if (!ledTaskMode) {
         return;
     }
     
-    ESP_LOGI(TAG, "Shutting down dual-core LED processing");
+    ESP_LOGI(TAG, "Shutting down LED task processing");
     
     // Send shutdown command to LED task
     LEDCommand shutdownCmd;
@@ -381,8 +388,8 @@ void LEDController::shutdownDualCore() {
         ledCommandQueue = nullptr;
     }
     
-    dualCoreMode = false;
-    ESP_LOGI(TAG, "Dual-core LED processing shut down");
+    ledTaskMode = false;
+    ESP_LOGI(TAG, "LED task processing shut down");
 }
 
 void LEDController::ledProcessingTaskWrapper(void* parameter) {
@@ -391,14 +398,18 @@ void LEDController::ledProcessingTaskWrapper(void* parameter) {
 }
 
 void LEDController::ledProcessingTask() {
-    ESP_LOGI(TAG, "LED processing task started on Core 1");
+#ifdef CONFIG_IDF_TARGET_ESP32
+    ESP_LOGI(TAG, "LED processing task started on ESP32 Core 1");
+#else
+    ESP_LOGI(TAG, "LED processing task started on ESP32C3 Core 0 (Priority 8)");
+#endif
     
     LEDCommand command;
     TickType_t lastWakeTime = xTaskGetTickCount();
-    const TickType_t frequency = pdMS_TO_TICKS(20); // 50 FPS (20ms intervals)
+    const TickType_t frequency = pdMS_TO_TICKS(15); // 15ms = 67 FPS for smooth LED performance
     
     while (true) {
-        // Process any pending commands
+        // Process any pending commands with non-blocking receive
         while (xQueueReceive(ledCommandQueue, &command, 0) == pdTRUE) {
             switch (command.type) {
                 case LEDCommandType::SHUTDOWN:
@@ -430,17 +441,16 @@ void LEDController::ledProcessingTask() {
             player->UpdateStrip(now, strip);
         }
         
-        // Maintain precise 50 FPS timing
+        // Maintain precise FPS timing (guaranteed CPU time due to high priority)
         vTaskDelayUntil(&lastWakeTime, frequency);
     }
 }
 
 bool LEDController::sendLEDCommand(const LEDCommand& command, TickType_t timeout) {
-    if (!dualCoreMode || !ledCommandQueue) {
+    if (!ledTaskMode || !ledCommandQueue) {
         return false;
     }
     
     return xQueueSend(ledCommandQueue, &command, timeout) == pdTRUE;
 }
 
-#endif // CONFIG_IDF_TARGET_ESP32

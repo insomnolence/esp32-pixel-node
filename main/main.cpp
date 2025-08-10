@@ -2,6 +2,7 @@
 #include "bluetooth/ble_gap_handler.h"
 #include "bluetooth/gatt_profile.h"
 #include "system/nvs_manager.h"
+#include "system/network_health.h"
 #include "bluetooth/pixel_packet_profile.h"
 #include "mesh/espnow_mesh_coordinator.h"
 #include "packet/led_packet_processor.h"
@@ -13,6 +14,7 @@
 #include "sdkconfig.h"
 
 #include "esp_log.h"
+#include "esp_random.h"
 
 #include <functional>
 #include <memory>
@@ -33,6 +35,19 @@ extern "C" void app_main(void) {
     ESPNowMeshCoordinator meshCoordinator;
     if (meshCoordinator.init() != ESP_OK) {
         ESP_LOGE(MAIN_TAG, "❌ Failed to initialize ESP-NOW LED Mesh network");
+        return;
+    }
+    
+    // Enable adaptive mesh system for topology-aware routing
+    ESP_LOGI(MAIN_TAG, "🔄 Enabling adaptive mesh system...");
+    esp_err_t adaptive_result = meshCoordinator.enableAdaptiveMesh();
+    if (adaptive_result == ESP_OK && meshCoordinator.isAdaptiveMeshEnabled()) {
+        ESP_LOGI(MAIN_TAG, "✅ Adaptive mesh system enabled - ready for topology-aware networking");
+        ESP_LOGI(MAIN_TAG, "📊 Adaptive mesh will begin neighbor discovery and topology analysis");
+        ESP_LOGI(MAIN_TAG, "🔍 Watch for neighbor discovery beacons and topology updates in logs");
+    } else {
+        ESP_LOGE(MAIN_TAG, "❌ Failed to enable adaptive mesh system: %s", esp_err_to_name(adaptive_result));
+        ESP_LOGE(MAIN_TAG, "⚠️ System cannot continue without adaptive mesh - aborting startup");
         return;
     }
 
@@ -105,8 +120,15 @@ extern "C" void app_main(void) {
     });
 
     // Set up BLE connection callbacks to notify mesh coordinator
-    pixel_packet_profile->setBleConnectionCallback([&meshCoordinator](bool connected) {
+    pixel_packet_profile->setBleConnectionCallback([&meshCoordinator, &pixel_packet_profile](bool connected) {
         if (connected) {
+            // Check if BLE connection should be accepted (stabilization period)
+            if (!meshCoordinator.shouldAcceptBleConnection()) {
+                ESP_LOGW(MAIN_TAG, "🔒 BLE connection rejected - stabilization period active, forcing disconnect");
+                pixel_packet_profile->forceDisconnect(); // Force disconnect to give clear feedback
+                return; // Connection will be disconnected
+            }
+            
             ESP_LOGI(MAIN_TAG, "🔥 Mobile phone connected via BLE - becoming LED mesh root (Node 0x%04X)", 
                      meshCoordinator.getNodeId());
             meshCoordinator.onBleConnected();
@@ -154,6 +176,9 @@ extern "C" void app_main(void) {
     
     bleGattServer.startAdvertising();
 
+    // Initialize network health monitoring
+    NetworkHealthMonitor networkHealth;
+    
     ESP_LOGI(MAIN_TAG, "✅ ESP32 LED Mesh Node ready - Node ID: 0x%04X", meshCoordinator.getNodeId());
     ESP_LOGI(MAIN_TAG, "📱 Connect via BLE to '%s' to control LED patterns", DEVICE_NAME);
 
@@ -161,8 +186,8 @@ extern "C" void app_main(void) {
         // Get current time for timing operations
         uint32_t now = esp_timer_get_time() / 1000;
         
-        // Update LED controller (must be called frequently for smooth animations)
-        ledController.update();
+        // LED updates are now handled by dedicated LED task with guaranteed timing
+        // Main loop focuses on network coordination and system management
         
         // Check for autonomous root election
         meshCoordinator.checkForRootElection();
@@ -183,20 +208,56 @@ extern "C" void app_main(void) {
             lastRootAnnouncement = now;
         }
         
-        // Monitor system status and network health every 30 seconds
-        static uint32_t lastStatusLog = 0;
-        if (now - lastStatusLog > 30000) {
+        // Update and report network health every 60 seconds (reduced frequency)
+        static uint32_t lastHealthUpdate = 0;
+        if (now - lastHealthUpdate > 60000) {
             const auto& stats = meshCoordinator.getNetworkStats();
+            size_t active_neighbors = meshCoordinator.getActiveNeighborCount();
             
-            ESP_LOGI(MAIN_TAG, "LED Node 0x%04X - Role: %s - LED: %s", 
+            // Convert mesh stats to simple format and update network health
+            MeshStats meshStats = {
+                .packets_sent = stats.packets_sent,
+                .packets_received = stats.packets_received,
+                .packets_dropped = stats.packets_dropped,
+                .send_failures = stats.send_failures
+            };
+            networkHealth.updateMetrics(meshStats, active_neighbors, -65, // TODO: Get real RSSI average
+                                      meshCoordinator.isRootNode() ? (meshCoordinator.isBleConnected() ? 1 : 2) : 0);
+            
+            const NetworkHealth& health = networkHealth.getCurrentHealth();
+            
+            // Single concise status line with network health
+            ESP_LOGI(MAIN_TAG, "Node 0x%04X | %s | LED:%s | Health:%u%% (%u neighbors, %u%% success)", 
                      meshCoordinator.getNodeId(), 
                      meshCoordinator.getRoleString(),
-                     ledController.getCurrentSequenceType());
-            ESP_LOGI(MAIN_TAG, "Mesh Stats: Sent=%lu, Received=%lu, Dropped=%lu, Failures=%lu", 
-                     stats.packets_sent, stats.packets_received, stats.packets_dropped, stats.send_failures);
+                     ledController.getCurrentSequenceType(),
+                     health.overall_score,
+                     health.active_neighbors,
+                     health.packet_success_rate);
             
-            lastStatusLog = now;
+            // TODO: Send network health via BLE characteristic when mobile app supports it
+            // For now, show detailed health in logs for debugging
+            const char* health_level = "UNKNOWN";
+            switch (networkHealth.getHealthLevel()) {
+                case NETWORK_EXCELLENT: health_level = "EXCELLENT"; break;
+                case NETWORK_GOOD: health_level = "GOOD"; break; 
+                case NETWORK_POOR: health_level = "POOR"; break;
+                case NETWORK_CRITICAL: health_level = "CRITICAL"; break;
+            }
+            ESP_LOGD(MAIN_TAG, "📊 Network Health Details: Level=%s, RSSI=%ddBm, Uptime=%uh", 
+                     health_level, health.avg_signal_strength, health.uptime_hours);
+            
+            lastHealthUpdate = now;
         }
+        
+        // Optional: Enable detailed mesh debugging (disabled in production)
+        #ifdef CONFIG_LOG_MAXIMUM_LEVEL_DEBUG
+        static uint32_t lastDetailedStatus = 0;
+        if (meshCoordinator.isAdaptiveMeshEnabled() && (now - lastDetailedStatus > 300000)) { // Every 5 minutes
+            meshCoordinator.printAdaptiveMeshStatus();
+            lastDetailedStatus = now;
+        }
+        #endif
         
         vTaskDelay(pdMS_TO_TICKS(15)); // 15ms delay for smooth LED updates while reducing ESP-NOW/BLE interference
     }

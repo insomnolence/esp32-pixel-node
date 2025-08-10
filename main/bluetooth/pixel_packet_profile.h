@@ -15,6 +15,9 @@ public:
     // Mesh integration callbacks
     void setBleConnectionCallback(std::function<void(bool)> callback);
     void setPacketForwardCallback(std::function<void(const GenericPacket&)> callback);
+    
+    // Connection management
+    void forceDisconnect(); // Force disconnect current connection
 
 private:
     void handleReadEvent(esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) override;
@@ -27,6 +30,11 @@ private:
     // Mesh integration callbacks
     std::function<void(bool)> ble_connection_callback;
     std::function<void(const GenericPacket&)> packet_forward_callback;
+    
+    // Connection state for forced disconnection
+    uint16_t current_conn_id;
+    esp_gatt_if_t current_gatts_if;
+    bool is_connected;
 };
 
 #endif // PIXEL_PACKET_PROFILE_H_

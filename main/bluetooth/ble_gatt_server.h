@@ -26,6 +26,8 @@ public:
     static void gattsEventHandler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
     void addProfile(std::shared_ptr<GattProfile> profile);
     void setAdvertisingCallback(std::function<void()> callback);
+    void validateGattServiceHealth(); // Debug function for GATT service validation
+    static void staticValidateGattHealth(); // Static version callable from anywhere
 
 private:
     std::vector<std::shared_ptr<GattProfile>> profile_list;
@@ -35,6 +37,7 @@ private:
     static const char* TAG;
     esp_ble_adv_params_t adv_params;
     static BLEGattServer* instance; // Declare the static instance variable
+    static uint32_t callback_counter; // Debug counter for callback invocations
     std::function<void()> advertisingCallback;
 };
 

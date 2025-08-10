@@ -3,34 +3,64 @@
 #include "esp_event.h"
 #include "esp_random.h"
 #include "nvs_flash.h"
+#include "esp_bt.h"
+#include "esp_mac.h"
 #include <string.h>
 #include <ctime>
 
+// Adaptive mesh components
+#include "adaptive/neighbor_manager.h"
+#include "adaptive/topology_manager.h"
+#include "adaptive/router.h"
+
+// BLE debugging
+#include "bluetooth/ble_gatt_server.h"
+
 const char* ESPNowMeshCoordinator::TAG = "ESPNowMeshCoordinator";
 ESPNowMeshCoordinator* ESPNowMeshCoordinator::instance = nullptr;
+SemaphoreHandle_t ESPNowMeshCoordinator::instance_mutex = nullptr;
 
-// PacketTracker implementation
-bool PacketTracker::isPacketSeen(uint32_t packet_id) {
+// BoundedPacketTracker implementation
+BoundedPacketTracker::BoundedPacketTracker() 
+    : history_index(0)
+    , history_count(0)
+    , last_cleanup(0)
+{
+    // Initialize packet history to zero
+    memset(packet_history, 0, sizeof(packet_history));
+}
+
+bool BoundedPacketTracker::isPacketSeen(uint32_t packet_id) {
     uint32_t now = esp_timer_get_time() / 1000; // Convert to ms
     
-    // Periodic cleanup
+    // Periodic cleanup (less frequent with bounded buffer)
     if (now - last_cleanup > CLEANUP_INTERVAL_MS) {
         cleanup();
         last_cleanup = now;
     }
     
-    if (seen_packets.count(packet_id)) {
-        return true; // Already seen
+    // Search through recent packet history
+    for (size_t i = 0; i < history_count; ++i) {
+        if (packet_history[i] == packet_id) {
+            return true; // Already seen
+        }
     }
     
-    seen_packets.insert(packet_id);
+    // Add to circular buffer
+    packet_history[history_index] = packet_id;
+    history_index = (history_index + 1) % PACKET_HISTORY_SIZE;
+    
+    if (history_count < PACKET_HISTORY_SIZE) {
+        history_count++;
+    }
+    
     return false; // New packet
 }
 
-void PacketTracker::cleanup() {
-    // Clear old packets to prevent memory growth
-    seen_packets.clear();
-    ESP_LOGD("PacketTracker", "Packet tracker cleaned up");
+void BoundedPacketTracker::cleanup() {
+    // With circular buffer, no cleanup needed - oldest entries are automatically overwritten
+    // This method exists for compatibility and potential future use
+    ESP_LOGD("BoundedPacketTracker", "Packet tracker maintenance complete (circular buffer)");
 }
 
 // ESPNowMeshCoordinator implementation
@@ -48,17 +78,34 @@ ESPNowMeshCoordinator::ESPNowMeshCoordinator()
     , election_state(ElectionState::ELECTION_IDLE)
     , election_start_time(0)
     , election_phase_timeout(0)
+    , election_candidate_count(0)
     , elected_root_node_id(0)
     , last_election_attempt(0)
+    , autonomous_root_timestamp(0)
+    , adaptive_mesh_enabled(false)
 {
+    // Create mutex for thread-safe singleton access if not already created
+    if (instance_mutex == nullptr) {
+        instance_mutex = xSemaphoreCreateMutex();
+        if (instance_mutex == nullptr) {
+            ESP_LOGE(TAG, "Failed to create instance mutex");
+        }
+    }
+    
     instance = this;
     memset(local_mac, 0, 6);
-    election_candidates.reserve(10);  // Pre-allocate for up to 10 candidates
+    memset(election_candidates, 0, sizeof(election_candidates));
 }
 
 ESPNowMeshCoordinator::~ESPNowMeshCoordinator() {
     stop();
     instance = nullptr;
+    
+    // Clean up mutex when last instance is destroyed
+    if (instance_mutex != nullptr) {
+        vSemaphoreDelete(instance_mutex);
+        instance_mutex = nullptr;
+    }
 }
 
 esp_err_t ESPNowMeshCoordinator::init() {
@@ -149,8 +196,11 @@ esp_err_t ESPNowMeshCoordinator::start() {
     // ESP-NOW is already started during init
     // No separate mesh task needed - callbacks handle everything
     
-    // Start autonomous root election timer (10-30 seconds random delay)
-    uint32_t election_delay = 10000 + (esp_random() % 20000); // 10-30 seconds
+    // Start autonomous root election timer with node-specific randomization to prevent conflicts
+    uint32_t base_delay = 15000; // 15 second base delay
+    uint32_t random_delay = esp_random() % 30000; // 0-30 seconds random
+    uint32_t node_offset = (node_id % 1000) * 10; // Node-specific offset (0-9.99 seconds)
+    uint32_t election_delay = base_delay + random_delay + node_offset; // 15-54.99 seconds total
     election_timer = esp_timer_get_time() / 1000 + election_delay;
     
     ESP_LOGI(TAG, "ESP-NOW mesh coordinator started successfully");
@@ -221,6 +271,12 @@ esp_err_t ESPNowMeshCoordinator::transitionToRole(NodeRole new_role) {
     
     ESP_LOGI(TAG, "Role transition: %d -> %d", (int)old_role, (int)new_role);
     current_role = new_role;
+    
+    // Track when we become autonomous root for BLE stabilization
+    if (new_role == NodeRole::MESH_ROOT_AUTONOMOUS) {
+        autonomous_root_timestamp = esp_timer_get_time() / 1000;
+        ESP_LOGI(TAG, "🔒 Autonomous root stabilization period started - BLE connections delayed for 3 seconds");
+    }
     
     // Notify callback if set
     if (role_change_callback) {
@@ -337,6 +393,116 @@ esp_err_t ESPNowMeshCoordinator::sendMeshPacketHighPriority(const ESPNowMeshPack
     return ESP_FAIL;
 }
 
+esp_err_t ESPNowMeshCoordinator::sendMeshPacketToNode(const ESPNowMeshPacket& packet, uint16_t target_node_id) {
+    if (!adaptive_mesh_enabled || !neighbor_manager) {
+        ESP_LOGW(TAG, "Adaptive mesh not enabled - falling back to broadcast");
+        return sendMeshPacket(packet);
+    }
+    
+    // Find the target node in our neighbor table
+    const NeighborInfo* target_neighbor = neighbor_manager->getNeighborByNodeId(target_node_id);
+    if (!target_neighbor) {
+        ESP_LOGW(TAG, "Target node 0x%04X not in neighbor table - falling back to broadcast", target_node_id);
+        return sendMeshPacket(packet);
+    }
+    
+    // Add target as ESP-NOW peer if not already added
+    esp_now_peer_info_t peer_info = {};
+    memcpy(peer_info.peer_addr, target_neighbor->mac_addr, 6);
+    peer_info.channel = ESPNOW_MESH_CHANNEL;
+    peer_info.encrypt = false;
+    
+    esp_err_t peer_result = esp_now_add_peer(&peer_info);
+    if (peer_result != ESP_OK && peer_result != ESP_ERR_ESPNOW_EXIST) {
+        ESP_LOGW(TAG, "Failed to add peer for node 0x%04X: %s", target_node_id, esp_err_to_name(peer_result));
+        return sendMeshPacket(packet); // Fall back to broadcast
+    }
+    
+    // Send directly to target node
+    size_t packet_size = sizeof(ESPNowMeshPacket) - sizeof(packet.data) + packet.data_len;
+    esp_err_t result = esp_now_send(target_neighbor->mac_addr, (uint8_t*)&packet, packet_size);
+    
+    if (result == ESP_OK) {
+        network_stats.packets_sent++;
+        ESP_LOGI(TAG, "🎯 Unicast packet sent to node 0x%04X (" MACSTR ")", 
+                 target_node_id, MAC2STR(target_neighbor->mac_addr));
+        return ESP_OK;
+    } else {
+        network_stats.send_failures++;
+        ESP_LOGW(TAG, "❌ Unicast send to node 0x%04X failed: %s", 
+                 target_node_id, esp_err_to_name(result));
+        return result;
+    }
+}
+
+esp_err_t ESPNowMeshCoordinator::sendMeshPacketToAllNeighbors(const ESPNowMeshPacket& packet) {
+    if (!adaptive_mesh_enabled || !neighbor_manager) {
+        ESP_LOGW(TAG, "Adaptive mesh not enabled - falling back to broadcast");
+        return sendMeshPacket(packet);
+    }
+    
+    size_t active_neighbors = neighbor_manager->getActiveNeighborCount();
+    if (active_neighbors == 0) {
+        ESP_LOGD(TAG, "No active neighbors - skipping intelligent flooding");
+        return ESP_OK;
+    }
+    
+    // Get all neighbors
+    std::array<NeighborInfo, MAX_NEIGHBORS> neighbors;
+    size_t neighbor_count = neighbor_manager->getAllNeighbors(neighbors);
+    
+    if (neighbor_count == 0) {
+        ESP_LOGD(TAG, "No neighbors available for intelligent flooding");
+        return ESP_OK;
+    }
+    
+    ESP_LOGI(TAG, "🌊 Intelligent flooding to %zu neighbors", neighbor_count);
+    
+    size_t successful_sends = 0;
+    for (size_t i = 0; i < neighbor_count; ++i) {
+        const NeighborInfo& neighbor = neighbors[i];
+        
+        // Skip neighbors with poor link quality for flooding
+        if (neighbor.link_quality == LinkQuality::UNUSABLE) {
+            continue;
+        }
+        
+        // Add neighbor as ESP-NOW peer if not already added
+        esp_now_peer_info_t peer_info = {};
+        memcpy(peer_info.peer_addr, neighbor.mac_addr, 6);
+        peer_info.channel = ESPNOW_MESH_CHANNEL;
+        peer_info.encrypt = false;
+        
+        esp_err_t peer_result = esp_now_add_peer(&peer_info);
+        if (peer_result != ESP_OK && peer_result != ESP_ERR_ESPNOW_EXIST) {
+            ESP_LOGD(TAG, "Could not add peer for node 0x%04X", neighbor.node_id);
+            continue;
+        }
+        
+        // Send to this neighbor
+        size_t packet_size = sizeof(ESPNowMeshPacket) - sizeof(packet.data) + packet.data_len;
+        esp_err_t result = esp_now_send(neighbor.mac_addr, (uint8_t*)&packet, packet_size);
+        
+        if (result == ESP_OK) {
+            successful_sends++;
+            ESP_LOGV(TAG, "Flooded to node 0x%04X (" MACSTR ")", 
+                     neighbor.node_id, MAC2STR(neighbor.mac_addr));
+        } else {
+            ESP_LOGD(TAG, "Failed to flood to node 0x%04X: %s", 
+                     neighbor.node_id, esp_err_to_name(result));
+        }
+        
+        // Small delay between sends to prevent congestion
+        vTaskDelay(pdMS_TO_TICKS(2));
+    }
+    
+    network_stats.packets_sent += successful_sends;
+    ESP_LOGI(TAG, "🌊 Intelligent flooding complete: %zu/%zu successful", 
+             successful_sends, neighbor_count);
+    
+    return (successful_sends > 0) ? ESP_OK : ESP_FAIL;
+}
+
 void ESPNowMeshCoordinator::randomBackoff() {
     // Adaptive random delay based on node ID to reduce collisions
     // Range: 5-25ms with node-specific offset
@@ -350,15 +516,23 @@ void ESPNowMeshCoordinator::randomBackoff() {
 }
 
 void ESPNowMeshCoordinator::onESPNowSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
-    if (instance) {
-        ESP_LOGD(instance->TAG, "ESP-NOW send status: %s", 
-                 status == ESP_NOW_SEND_SUCCESS ? "SUCCESS" : "FAIL");
+    // Thread-safe access to singleton instance from interrupt context
+    if (instance_mutex != nullptr && xSemaphoreTake(instance_mutex, 0) == pdTRUE) {
+        if (instance) {
+            ESP_LOGD(instance->TAG, "ESP-NOW send status: %s", 
+                     status == ESP_NOW_SEND_SUCCESS ? "SUCCESS" : "FAIL");
+        }
+        xSemaphoreGive(instance_mutex);
     }
 }
 
 void ESPNowMeshCoordinator::onESPNowReceived(const esp_now_recv_info_t *recv_info, const uint8_t *data, int len) {
-    if (instance) {
-        instance->handleReceivedPacket(recv_info->src_addr, data, len);
+    // Thread-safe access to singleton instance from interrupt context
+    if (instance_mutex != nullptr && xSemaphoreTake(instance_mutex, 0) == pdTRUE) {
+        if (instance) {
+            instance->handleReceivedPacket(recv_info->src_addr, data, len);
+        }
+        xSemaphoreGive(instance_mutex);
     }
 }
 
@@ -510,12 +684,53 @@ void ESPNowMeshCoordinator::handleReceivedPacket(const uint8_t *mac_addr, const 
                     }
                 } else {
                     ESP_LOGI(TAG, "Received autonomous root announcement from node 0x%04X", announcing_node_id);
+                    
+                    // CRITICAL: Autonomous-to-autonomous conflict resolution  
+                    // If we're both autonomous roots, the one with higher priority (lower node ID) should win
+                    if (current_role == NodeRole::MESH_ROOT_AUTONOMOUS) {
+                        if (announcing_node_id < node_id) {
+                            ESP_LOGI(TAG, "🚨 Autonomous root conflict: Node 0x%04X has higher priority than us (0x%04X)", 
+                                     announcing_node_id, node_id);
+                            ESP_LOGI(TAG, "🚨 Stepping down from autonomous root - Node 0x%04X takes precedence", announcing_node_id);
+                            transitionToRole(NodeRole::MESH_CLIENT);
+                            election_timer = esp_timer_get_time() / 1000 + 60000; // Wait 60 seconds before next election attempt
+                        } else {
+                            ESP_LOGI(TAG, "🏆 Maintaining autonomous root - Our priority (0x%04X) is higher than Node 0x%04X", 
+                                     node_id, announcing_node_id);
+                        }
+                    }
                 }
             }
             
             // Cancel our own election if we were about to become root
             if (current_role == NodeRole::MESH_CLIENT) {
                 election_timer = esp_timer_get_time() / 1000 + 45000; // Wait 45 seconds before next attempt
+            }
+            break;
+            
+        // Adaptive Mesh Packet Processing
+        case MeshPacketType::ADAPTIVE_NEIGHBOR_DISCOVERY:
+            if (adaptive_mesh_enabled && neighbor_manager) {
+                processAdaptiveNeighborDiscovery(*mesh_packet);
+            }
+            break;
+            
+        case MeshPacketType::ADAPTIVE_TOPOLOGY_UPDATE:
+            if (adaptive_mesh_enabled && topology_manager) {
+                processAdaptiveTopologyUpdate(*mesh_packet);
+            }
+            break;
+            
+        case MeshPacketType::ADAPTIVE_ROUTE_REQUEST:
+        case MeshPacketType::ADAPTIVE_ROUTE_REPLY:
+            if (adaptive_mesh_enabled && adaptive_router) {
+                processAdaptiveRouting(*mesh_packet);
+            }
+            break;
+            
+        case MeshPacketType::ADAPTIVE_DATA_FORWARD:
+            if (adaptive_mesh_enabled && adaptive_router) {
+                processAdaptiveDataForward(*mesh_packet);
             }
             break;
             
@@ -538,8 +753,33 @@ void ESPNowMeshCoordinator::forwardPacket(const ESPNowMeshPacket& packet) {
     ESP_LOGD(TAG, "Forwarding packet ID: 0x%08lX (TTL: %d -> %d)", 
              packet.packet_id, packet.ttl, forward_packet.ttl);
     
-    // Forward with random backoff
-    sendMeshPacket(forward_packet);
+    // Use adaptive routing if enabled, otherwise fall back to broadcast
+    if (adaptive_mesh_enabled && adaptive_router) {
+        // Get destination node from source MAC (2 byte node ID)
+        uint16_t destination_node = (packet.source_mac[4] << 8) | packet.source_mac[5];
+        
+        // For broadcast packets (LED patterns), use broadcast routing
+        if (packet.packet_type == static_cast<uint8_t>(MeshPacketType::LED_PATTERN)) {
+            // LED patterns should reach all nodes - use intelligent flooding
+            ESP_LOGD(TAG, "🎨 Adaptive forwarding LED pattern to all reachable nodes");
+            sendMeshPacketToAllNeighbors(forward_packet);
+        } else {
+            // For unicast packets, use adaptive routing
+            uint16_t next_hop = adaptive_router->selectBestNextHop(destination_node, PacketPriority::NORMAL);
+            if (next_hop != 0) {
+                ESP_LOGD(TAG, "🛣️ Adaptive routing to node 0x%04X via next hop 0x%04X", destination_node, next_hop);
+                sendMeshPacketToNode(forward_packet, next_hop);
+            } else {
+                ESP_LOGD(TAG, "❌ No route found to node 0x%04X, dropping packet", destination_node);
+                network_stats.packets_dropped++;
+                return;
+            }
+        }
+    } else {
+        // Fall back to flat broadcast
+        ESP_LOGD(TAG, "📡 Flat broadcast forwarding (adaptive mesh disabled)");
+        sendMeshPacket(forward_packet);
+    }
 }
 
 // Getter methods
@@ -593,6 +833,11 @@ bool ESPNowMeshCoordinator::isAutonomousRoot() const {
 void ESPNowMeshCoordinator::checkForRootElection() {
     uint32_t current_time = esp_timer_get_time() / 1000;
     
+    // Run adaptive mesh neighbor discovery if enabled
+    if (adaptive_mesh_enabled && neighbor_manager) {
+        neighbor_manager->startNeighborDiscovery();
+    }
+    
     // Only clients can participate in autonomous root election
     if (current_role != NodeRole::MESH_CLIENT) {
         return;
@@ -633,6 +878,20 @@ void ESPNowMeshCoordinator::checkForRootElection() {
         if (!heard_from_root) {
             ESP_LOGI(TAG, "🗳️ Single node scenario detected - becoming autonomous root");
             transitionToRole(NodeRole::MESH_ROOT_AUTONOMOUS);
+            
+            // Debug BLE stack status after election
+            esp_bt_controller_status_t bt_status = esp_bt_controller_get_status();
+            ESP_LOGI(TAG, "🔍 BLE stack status after election: %d (0=idle, 1=inited, 2=enabled)", bt_status);
+            ESP_LOGI(TAG, "🔍 Checking BLE advertising status after becoming autonomous root");
+            
+            // Debug GATT service state after election
+            ESP_LOGI(TAG, "🔍 GATT service validation after autonomous election:");
+            ESP_LOGI(TAG, "🔍 Testing if GATT callbacks are still registered...");
+            
+            // Trigger GATT health validation 
+            ESP_LOGI(TAG, "🔍 Calling static GATT health check...");
+            BLEGattServer::staticValidateGattHealth();
+            
             sendRootAnnouncement();
         } else {
             ESP_LOGI(TAG, "Other nodes detected - starting full advanced election");
@@ -741,6 +1000,28 @@ uint32_t ESPNowMeshCoordinator::getBleConnectionAge() const {
     return current_uptime - ble_connection_uptime_ms;
 }
 
+bool ESPNowMeshCoordinator::shouldAcceptBleConnection() const {
+    // Always accept connections if we're not autonomous root
+    if (current_role != NodeRole::MESH_ROOT_AUTONOMOUS) {
+        return true;
+    }
+    
+    // Check if stabilization period has passed (3 seconds)
+    uint32_t current_time = esp_timer_get_time() / 1000;
+    uint32_t time_since_autonomous = current_time - autonomous_root_timestamp;
+    
+    static const uint32_t STABILIZATION_PERIOD_MS = 3000; // 3 seconds
+    
+    if (time_since_autonomous < STABILIZATION_PERIOD_MS) {
+        ESP_LOGW(TAG, "🔒 BLE connection blocked - stabilization period active (%lu/%lu ms)", 
+                 time_since_autonomous, STABILIZATION_PERIOD_MS);
+        return false;
+    }
+    
+    ESP_LOGI(TAG, "✅ BLE connection allowed - stabilization period complete (%lu ms)", time_since_autonomous);
+    return true;
+}
+
 uint32_t ESPNowMeshCoordinator::calculateNodePriority() const {
     uint32_t priority = 0;
     uint32_t current_uptime = esp_timer_get_time() / 1000;
@@ -809,7 +1090,7 @@ void ESPNowMeshCoordinator::startAdvancedElection() {
     election_start_time = current_time;
     last_election_attempt = current_time;
     elected_root_node_id = 0;
-    election_candidates.clear();
+    election_candidate_count = 0;
     
     // Add ourselves as a candidate
     ElectionCandidate self_candidate;
@@ -818,14 +1099,17 @@ void ESPNowMeshCoordinator::startAdvancedElection() {
     self_candidate.uptime_ms = current_time;
     memcpy(self_candidate.mac_addr, local_mac, 6);
     self_candidate.timestamp_received = current_time;
-    election_candidates.push_back(self_candidate);
+    if (election_candidate_count < MAX_ELECTION_CANDIDATES) {
+        election_candidates[election_candidate_count++] = self_candidate;
+    }
     
     // Set discovery phase timeout (3-7 seconds randomized to prevent collisions)
     uint32_t discovery_timeout = 3000 + (esp_random() % 4000);  // 3-7 seconds
     election_phase_timeout = current_time + discovery_timeout;
     
     ESP_LOGI(TAG, "Election DISCOVERY phase: listening for candidates (%lu ms timeout)", discovery_timeout);
-    ESP_LOGI(TAG, "🗳️ Election initialized: state=DISCOVERY, timeout=%lu, self_candidate added", election_phase_timeout);
+    ESP_LOGI(TAG, "🗳️ Election initialized: state=DISCOVERY, timeout=%lu, candidates=%zu", 
+             election_phase_timeout, election_candidate_count);
     
     // Send discovery announcement to let other nodes know we're starting election
     sendElectionDiscoveryPacket();
@@ -866,7 +1150,7 @@ void ESPNowMeshCoordinator::checkElectionTimeout() {
         ESP_LOGD(TAG, "Election in progress: state=%d, timeout in %ld ms, candidates=%zu", 
                  (int)election_state, 
                  election_phase_timeout > current_time ? election_phase_timeout - current_time : 0,
-                 election_candidates.size());
+                 election_candidate_count);
         last_election_debug = current_time;
     }
     
@@ -904,7 +1188,7 @@ void ESPNowMeshCoordinator::advanceElectionPhase() {
             election_phase_timeout = current_time + 1000;  // 1 second confirmation phase
             
             // Determine election winner
-            if (!election_candidates.empty()) {
+            if (election_candidate_count > 0) {
                 ElectionCandidate winner = selectBestCandidate();
                 elected_root_node_id = winner.node_id;
                 
@@ -1013,7 +1297,7 @@ void ESPNowMeshCoordinator::sendElectionCandidatePacket() {
 
 void ESPNowMeshCoordinator::sendElectionVotePacket() {
     // Select the best candidate from our list
-    if (election_candidates.empty()) {
+    if (election_candidate_count == 0) {
         ESP_LOGW(TAG, "No candidates to vote for - skipping vote");
         return;
     }
@@ -1124,7 +1408,7 @@ void ESPNowMeshCoordinator::processElectionDiscovery(const ESPNowMeshPacket& pac
         election_start_time = current_time;
         last_election_attempt = current_time;
         elected_root_node_id = 0;
-        election_candidates.clear();
+        election_candidate_count = 0;
         
         // Add ourselves as a candidate
         ElectionCandidate self_candidate;
@@ -1133,7 +1417,9 @@ void ESPNowMeshCoordinator::processElectionDiscovery(const ESPNowMeshPacket& pac
         self_candidate.uptime_ms = current_time;
         memcpy(self_candidate.mac_addr, local_mac, 6);
         self_candidate.timestamp_received = current_time;
-        election_candidates.push_back(self_candidate);
+        if (election_candidate_count < MAX_ELECTION_CANDIDATES) {
+            election_candidates[election_candidate_count++] = self_candidate;
+        }
         
         // Add the election starter as a candidate
         ElectionCandidate starter_candidate;
@@ -1142,14 +1428,16 @@ void ESPNowMeshCoordinator::processElectionDiscovery(const ESPNowMeshPacket& pac
         starter_candidate.uptime_ms = current_time;
         memcpy(starter_candidate.mac_addr, packet.source_mac, 6);
         starter_candidate.timestamp_received = current_time;
-        election_candidates.push_back(starter_candidate);
+        if (election_candidate_count < MAX_ELECTION_CANDIDATES) {
+            election_candidates[election_candidate_count++] = starter_candidate;
+        }
         
         // Set discovery phase timeout (shorter since election already started)
         uint32_t remaining_discovery_time = 2000 + (esp_random() % 2000); // 2-4 seconds remaining
         election_phase_timeout = current_time + remaining_discovery_time;
         
         ESP_LOGI(TAG, "🗳️ Joined election: state=DISCOVERY, timeout=%lu, candidates=%zu", 
-                 election_phase_timeout, election_candidates.size());
+                 election_phase_timeout, election_candidate_count);
     } else if (election_state != ElectionState::ELECTION_IDLE) {
         ESP_LOGI(TAG, "Already in election - acknowledging Node 0x%04X", source_node_id);
     }
@@ -1188,28 +1476,33 @@ void ESPNowMeshCoordinator::processElectionCandidate(const ESPNowMeshPacket& pac
     }
     
     // Check if we already have this candidate
-    for (auto& candidate : election_candidates) {
-        if (candidate.node_id == candidate_node_id) {
+    for (size_t i = 0; i < election_candidate_count; ++i) {
+        if (election_candidates[i].node_id == candidate_node_id) {
             // Update existing candidate with newer information
-            candidate.priority_score = priority_score;
-            candidate.uptime_ms = uptime_ms;
-            candidate.timestamp_received = esp_timer_get_time() / 1000;
-            memcpy(candidate.mac_addr, &packet.data[6], 6);
+            election_candidates[i].priority_score = priority_score;
+            election_candidates[i].uptime_ms = uptime_ms;
+            election_candidates[i].timestamp_received = esp_timer_get_time() / 1000;
+            memcpy(election_candidates[i].mac_addr, &packet.data[6], 6);
             ESP_LOGD(TAG, "Updated existing candidate Node 0x%04X", candidate_node_id);
             return;
         }
     }
     
-    // Add new candidate to our list
-    ElectionCandidate new_candidate;
-    new_candidate.node_id = candidate_node_id;
-    new_candidate.priority_score = priority_score;
-    new_candidate.uptime_ms = uptime_ms;
-    new_candidate.timestamp_received = esp_timer_get_time() / 1000;
-    memcpy(new_candidate.mac_addr, &packet.data[6], 6);
-    
-    election_candidates.push_back(new_candidate);
-    ESP_LOGI(TAG, "Added new candidate Node 0x%04X (total candidates: %zu)", candidate_node_id, election_candidates.size());
+    // Add new candidate to our array if space available
+    if (election_candidate_count < MAX_ELECTION_CANDIDATES) {
+        ElectionCandidate& new_candidate = election_candidates[election_candidate_count];
+        new_candidate.node_id = candidate_node_id;
+        new_candidate.priority_score = priority_score;
+        new_candidate.uptime_ms = uptime_ms;
+        new_candidate.timestamp_received = esp_timer_get_time() / 1000;
+        memcpy(new_candidate.mac_addr, &packet.data[6], 6);
+        
+        election_candidate_count++;
+        ESP_LOGI(TAG, "Added new candidate Node 0x%04X (total candidates: %zu)", 
+                 candidate_node_id, election_candidate_count);
+    } else {
+        ESP_LOGW(TAG, "Election candidate list full - cannot add Node 0x%04X", candidate_node_id);
+    }
 }
 
 void ESPNowMeshCoordinator::processElectionVote(const ESPNowMeshPacket& packet) {
@@ -1304,24 +1597,279 @@ void ESPNowMeshCoordinator::processElectionResult(const ESPNowMeshPacket& packet
         
         ESP_LOGI(TAG, "Election participation ended - new root: Node 0x%04X", winner_node_id);
     } else {
-        ESP_LOGI(TAG, "Election result received but we weren't participating");
+        ESP_LOGI(TAG, "Election result received but we weren't participating - checking for conflict resolution");
+        
+        // CRITICAL: Even if we weren't participating, we need to resolve split-brain scenarios
+        // If we're autonomous root and another node won an election, we should step down
+        if (current_role == NodeRole::MESH_ROOT_AUTONOMOUS && winner_node_id != node_id) {
+            ESP_LOGI(TAG, "🚨 Split-brain detected: We are autonomous root but Node 0x%04X won election", winner_node_id);
+            ESP_LOGI(TAG, "🚨 Stepping down from autonomous root to prevent split-brain scenario");
+            transitionToRole(NodeRole::MESH_CLIENT);
+            
+            // Reset election timer to prevent immediate re-election
+            election_timer = esp_timer_get_time() / 1000 + 60000; // Wait 60 seconds
+        }
     }
 }
 
 ESPNowMeshCoordinator::ElectionCandidate ESPNowMeshCoordinator::selectBestCandidate() const {
-    if (election_candidates.empty()) {
+    if (election_candidate_count == 0) {
         // Return a default candidate if none exist
         ElectionCandidate default_candidate = {};
         return default_candidate;
     }
     
     // Find candidate with highest priority (using the < operator defined in struct)
-    auto best_candidate = election_candidates[0];
-    for (const auto& candidate : election_candidates) {
-        if (candidate < best_candidate) {  // < operator means higher priority
-            best_candidate = candidate;
+    ElectionCandidate best_candidate = election_candidates[0];
+    for (size_t i = 1; i < election_candidate_count; ++i) {
+        if (election_candidates[i] < best_candidate) {  // < operator means higher priority
+            best_candidate = election_candidates[i];
         }
     }
     
     return best_candidate;
+}
+
+// Adaptive Mesh Control Methods
+esp_err_t ESPNowMeshCoordinator::enableAdaptiveMesh() {
+    if (adaptive_mesh_enabled) {
+        ESP_LOGW(TAG, "Adaptive mesh already enabled");
+        return ESP_OK;
+    }
+    
+    ESP_LOGI(TAG, "Enabling adaptive mesh system");
+    
+    // Initialize adaptive mesh components
+    if (!neighbor_manager) {
+        neighbor_manager = std::make_unique<NeighborManager>();
+        if (neighbor_manager->init(node_id) != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to initialize NeighborManager");
+            neighbor_manager.reset();
+            return ESP_FAIL;
+        }
+    }
+    
+    if (!topology_manager) {
+        topology_manager = std::make_unique<TopologyManager>();
+        if (topology_manager->init(node_id, neighbor_manager.get()) != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to initialize TopologyManager");
+            topology_manager.reset();
+            neighbor_manager.reset();
+            return ESP_FAIL;
+        }
+    }
+    
+    if (!adaptive_router) {
+        adaptive_router = std::make_unique<AdaptiveRouter>();
+        if (adaptive_router->init(node_id, neighbor_manager.get(), topology_manager.get()) != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to initialize AdaptiveRouter");
+            adaptive_router.reset();
+            topology_manager.reset();
+            neighbor_manager.reset();
+            return ESP_FAIL;
+        }
+    }
+    
+    // Connect beacon send callback to ESP-NOW transmission
+    neighbor_manager->setBeaconSendCallback([this](const uint8_t* data, size_t len) {
+        // Create ADAPTIVE_NEIGHBOR_DISCOVERY packet from beacon data
+        GenericPacket beacon_packet;
+        beacon_packet.setData(data, len);
+        
+        ESPNowMeshPacket mesh_packet = createMeshPacket(
+            MeshPacketType::ADAPTIVE_NEIGHBOR_DISCOVERY, 
+            beacon_packet, 
+            2  // Limited TTL for neighbor discovery
+        );
+        
+        esp_err_t result = sendMeshPacket(mesh_packet);
+        if (result == ESP_OK) {
+            ESP_LOGD(TAG, "📡 Neighbor discovery beacon transmitted successfully");
+        } else {
+            ESP_LOGW(TAG, "❌ Failed to transmit neighbor discovery beacon: %s", 
+                     esp_err_to_name(result));
+        }
+    });
+    
+    // Start adaptive mesh components
+    neighbor_manager->startNeighborDiscovery();
+    ESP_LOGI(TAG, "Started neighbor discovery process with ESP-NOW transmission");
+    
+    adaptive_mesh_enabled = true;
+    ESP_LOGI(TAG, "Adaptive mesh system enabled successfully");
+    
+    return ESP_OK;
+}
+
+void ESPNowMeshCoordinator::disableAdaptiveMesh() {
+    if (!adaptive_mesh_enabled) {
+        ESP_LOGW(TAG, "Adaptive mesh already disabled");
+        return;
+    }
+    
+    ESP_LOGI(TAG, "Disabling adaptive mesh system");
+    
+    // Clean shutdown of components
+    adaptive_router.reset();
+    topology_manager.reset();
+    neighbor_manager.reset();
+    
+    adaptive_mesh_enabled = false;
+    ESP_LOGI(TAG, "Adaptive mesh system disabled");
+}
+
+bool ESPNowMeshCoordinator::isAdaptiveMeshEnabled() const {
+    return adaptive_mesh_enabled;
+}
+
+size_t ESPNowMeshCoordinator::getActiveNeighborCount() const {
+    if (neighbor_manager) {
+        return neighbor_manager->getActiveNeighborCount();
+    }
+    return 0;
+}
+
+void ESPNowMeshCoordinator::printAdaptiveMeshStatus() const {
+    if (!adaptive_mesh_enabled) {
+        ESP_LOGI(TAG, "🔄 Adaptive mesh system is DISABLED - using flat mesh");
+        return;
+    }
+    
+    ESP_LOGI(TAG, "🔍 === ADAPTIVE MESH STATUS ===");
+    
+    // NeighborManager status
+    if (neighbor_manager) {
+        const auto& neighbor_stats = neighbor_manager->getStats();
+        ESP_LOGI(TAG, "📡 Neighbor Discovery:");
+        ESP_LOGI(TAG, "  • Active Neighbors: %d", neighbor_stats.current_neighbor_count);
+        ESP_LOGI(TAG, "  • Total Discovered: %lu", neighbor_stats.neighbors_discovered);
+        ESP_LOGI(TAG, "  • Beacons Sent: %lu", neighbor_stats.beacons_sent);
+        ESP_LOGI(TAG, "  • Beacons Received: %lu", neighbor_stats.beacons_received);
+        
+        if (neighbor_stats.current_neighbor_count > 0) {
+            neighbor_manager->printNeighborTable();
+        }
+    }
+    
+    // TopologyManager status  
+    if (topology_manager) {
+        const auto& topo_stats = topology_manager->getStats();
+        ESP_LOGI(TAG, "🗺️ Network Topology:");
+        ESP_LOGI(TAG, "  • Reachable Nodes: %zu", topology_manager->getReachableNodeCount());
+        ESP_LOGI(TAG, "  • Topology Updates Sent: %lu", topo_stats.topology_updates_sent);
+        ESP_LOGI(TAG, "  • Topology Updates Received: %lu", topo_stats.topology_updates_received);
+        ESP_LOGI(TAG, "  • Role Changes: %lu", topo_stats.role_changes);
+    }
+    
+    // AdaptiveRouter status
+    if (adaptive_router) {
+        const auto& routing_stats = adaptive_router->getStats();
+        ESP_LOGI(TAG, "🛣️ Adaptive Routing:");
+        ESP_LOGI(TAG, "  • Active Destinations: %u", routing_stats.active_destinations);
+        ESP_LOGI(TAG, "  • Total Routes: %u", routing_stats.total_routes);
+        ESP_LOGI(TAG, "  • Route Updates Sent: %lu", routing_stats.route_updates_sent);
+        ESP_LOGI(TAG, "  • Route Updates Received: %lu", routing_stats.route_updates_received);
+        ESP_LOGI(TAG, "  • Packets Routed: %lu", routing_stats.packets_routed);
+        ESP_LOGI(TAG, "  • Route Discoveries: %lu", routing_stats.route_discoveries);
+        
+        if (routing_stats.total_routes > 0) {
+            adaptive_router->printRoutingTable();
+        }
+    }
+    
+    ESP_LOGI(TAG, "🔍 === END ADAPTIVE MESH STATUS ===");
+}
+
+void ESPNowMeshCoordinator::simulateNeighborDiscovery(uint16_t simulated_node_id, int8_t rssi) {
+    if (!adaptive_mesh_enabled || !neighbor_manager) {
+        ESP_LOGW(TAG, "Adaptive mesh not enabled - cannot simulate neighbor discovery");
+        return;
+    }
+    
+    ESP_LOGI(TAG, "🧪 Simulating neighbor discovery from Node 0x%04X (RSSI: %d dBm)", 
+             simulated_node_id, rssi);
+    
+    // Create a simulated neighbor discovery beacon
+    struct SimulatedBeacon {
+        uint32_t magic = 0xDEADBEEF;  // Match NeighborManager's DISCOVERY_BEACON_MAGIC
+        uint16_t node_id;
+        uint8_t beacon_sequence = 1;
+        uint32_t uptime_ms;
+        uint8_t neighbor_count = 0;
+        uint32_t timestamp_ms;
+    } __attribute__((packed));
+    
+    SimulatedBeacon beacon;
+    beacon.node_id = simulated_node_id;
+    beacon.uptime_ms = esp_timer_get_time() / 1000;
+    beacon.timestamp_ms = beacon.uptime_ms;
+    
+    // Create a fake MAC address for this simulated node
+    uint8_t simulated_mac[6] = {0x02, 0x00, 0x00, 0x00, 
+                                (uint8_t)(simulated_node_id >> 8), 
+                                (uint8_t)(simulated_node_id & 0xFF)};
+    
+    // Send the beacon to NeighborManager for processing
+    neighbor_manager->processNeighborBeacon(simulated_mac, 
+                                           (uint8_t*)&beacon, 
+                                           sizeof(beacon), 
+                                           rssi);
+    
+    ESP_LOGI(TAG, "🧪 Neighbor discovery simulation completed");
+}
+
+// Adaptive Mesh Packet Processing Methods
+void ESPNowMeshCoordinator::processAdaptiveNeighborDiscovery(const ESPNowMeshPacket& packet) {
+    if (!neighbor_manager) {
+        ESP_LOGW(TAG, "NeighborManager not initialized");
+        return;
+    }
+    
+    ESP_LOGD(TAG, "🔍 Processing neighbor discovery beacon from Node 0x%04X", 
+             (packet.source_mac[4] << 8) | packet.source_mac[5]);
+    
+    // RSSI would come from ESP-NOW receive callback - using reasonable default
+    // In production, this would be passed from the actual radio layer
+    int8_t rssi = -60; // Reasonable default for close neighbors
+    
+    neighbor_manager->processNeighborBeacon(packet.source_mac, packet.data, 
+                                          packet.data_len, rssi);
+}
+
+void ESPNowMeshCoordinator::processAdaptiveTopologyUpdate(const ESPNowMeshPacket& packet) {
+    if (!topology_manager) {
+        ESP_LOGW(TAG, "TopologyManager not initialized");
+        return;
+    }
+    
+    ESP_LOGD(TAG, "Processing adaptive topology update packet");
+    
+    // Pass topology update to TopologyManager with sender MAC
+    topology_manager->processTopologyUpdate(packet.source_mac, packet.data, packet.data_len);
+}
+
+void ESPNowMeshCoordinator::processAdaptiveRouting(const ESPNowMeshPacket& packet) {
+    if (!adaptive_router) {
+        ESP_LOGW(TAG, "AdaptiveRouter not initialized");
+        return;
+    }
+    
+    ESP_LOGD(TAG, "Processing adaptive routing packet (type: %d)", packet.packet_type);
+    
+    // Pass route updates to AdaptiveRouter with sender MAC
+    adaptive_router->processRouteUpdate(packet.source_mac, packet.data, packet.data_len);
+}
+
+void ESPNowMeshCoordinator::processAdaptiveDataForward(const ESPNowMeshPacket& packet) {
+    if (!adaptive_router) {
+        ESP_LOGW(TAG, "AdaptiveRouter not initialized");
+        return;
+    }
+    
+    ESP_LOGD(TAG, "Processing adaptive data forward packet");
+    
+    // For now, this is a placeholder for smart packet forwarding
+    // In the future, this would use the adaptive router to determine
+    // the best forwarding strategy based on topology and routes
+    ESP_LOGD(TAG, "Adaptive data forwarding not yet implemented");
 }

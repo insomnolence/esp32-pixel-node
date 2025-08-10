@@ -5,9 +5,13 @@ idf_component_register(SRCS
     "bluetooth/gatt_profile.cpp" 
     "bluetooth/pixel_packet_profile.cpp"
     "mesh/espnow_mesh_coordinator.cpp"
+    "mesh/adaptive/neighbor_manager.cpp"
+    "mesh/adaptive/topology_manager.cpp"
+    "mesh/adaptive/router.cpp"
     "packet/generic_packet.cpp"
     "packet/led_packet_processor.cpp"
     "system/nvs_manager.cpp"
+    "system/network_health.cpp"
     "led/led_strip.cpp"
     "led/led_strip_encoder.cpp"
     "led/pattern.cpp"
@@ -15,4 +19,4 @@ idf_component_register(SRCS
     "led/player.cpp"
     "led/sequence.cpp"
     "led/led_controller.cpp"
-    INCLUDE_DIRS "." "bluetooth" "mesh" "packet" "led" "system")
+    INCLUDE_DIRS "." "bluetooth" "mesh" "mesh/adaptive" "packet" "led" "system")

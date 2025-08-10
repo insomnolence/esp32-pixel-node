@@ -85,12 +85,10 @@ private:
     const uint8_t ledPin;      // Const - never changes after construction
     const uint16_t ledCount;   // Const - never changes after construction
     
-    // Dual-core processing members (ESP32 only)
-#ifdef CONFIG_IDF_TARGET_ESP32
+    // LED task processing members (both ESP32 and ESP32C3)
     QueueHandle_t ledCommandQueue;
     TaskHandle_t ledTaskHandle;
-    bool dualCoreMode;
-#endif
+    bool ledTaskMode;
     
     static const char* TAG;
     
@@ -100,14 +98,12 @@ private:
     void cleanup(); // Clean up allocated resources on failure
     void setSequence(Sequence* sequence); // Platform-adaptive sequence setting
     
-    // Dual-core processing methods (ESP32 only)
-#ifdef CONFIG_IDF_TARGET_ESP32
-    esp_err_t initDualCore();
-    void shutdownDualCore();
+    // LED task processing methods (both ESP32 and ESP32C3)
+    esp_err_t initLEDTask();
+    void shutdownLEDTask();
     static void ledProcessingTaskWrapper(void* parameter);
     void ledProcessingTask();
     bool sendLEDCommand(const LEDCommand& command, TickType_t timeout = portMAX_DELAY);
-#endif
 };
 
 #endif // LED_CONTROLLER_H_

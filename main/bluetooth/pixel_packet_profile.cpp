@@ -3,9 +3,14 @@
 #include "packet.h"
 #include "ble_gap_handler.h"
 #include "string.h"
+#include "esp_gatts_api.h" // For esp_ble_gatts_close
+#include "esp_gap_ble_api.h" // For esp_ble_gap_disconnect
 
 PixelPacketProfile::PixelPacketProfile(const std::string& service_uuid_str, const std::string& characteristic_uuid_str)
-    : GattProfile(service_uuid_str, characteristic_uuid_str) {
+    : GattProfile(service_uuid_str, characteristic_uuid_str)
+    , current_conn_id(0)
+    , current_gatts_if(ESP_GATT_IF_NONE)
+    , is_connected(false) {
 }
 
 PixelPacketProfile::~PixelPacketProfile() {
@@ -41,6 +46,12 @@ void PixelPacketProfile::gattsEventHandler(esp_gatts_cb_event_t event, esp_gatt_
         case ESP_GATTS_CONNECT_EVT:
             ESP_LOGI(TAG, "🔥 BLE CLIENT CONNECTED!");
             handleConnectEvent(gatts_if, param);
+            
+            // Track connection state for potential forced disconnection
+            current_conn_id = param->connect.conn_id;
+            current_gatts_if = gatts_if;
+            is_connected = true;
+            
             if (ble_connection_callback) {
                 ESP_LOGI(TAG, "🔥 Calling BLE connection callback (connected=true)");
                 ble_connection_callback(true);
@@ -52,6 +63,12 @@ void PixelPacketProfile::gattsEventHandler(esp_gatts_cb_event_t event, esp_gatt_
         case ESP_GATTS_DISCONNECT_EVT:
             ESP_LOGI(TAG, "🔥 BLE CLIENT DISCONNECTED!");
             handleDisconnectEvent(gatts_if, param);
+            
+            // Clear connection state
+            is_connected = false;
+            current_conn_id = 0;
+            current_gatts_if = ESP_GATT_IF_NONE;
+            
             if (ble_connection_callback) {
                 ESP_LOGI(TAG, "🔥 Calling BLE connection callback (connected=false)");
                 ble_connection_callback(false);
@@ -191,4 +208,21 @@ void PixelPacketProfile::setBleConnectionCallback(std::function<void(bool)> call
 
 void PixelPacketProfile::setPacketForwardCallback(std::function<void(const GenericPacket&)> callback) {
     packet_forward_callback = callback;
+}
+
+void PixelPacketProfile::forceDisconnect() {
+    if (!is_connected) {
+        ESP_LOGW(TAG, "🔒 Force disconnect called but no active connection");
+        return;
+    }
+    
+    ESP_LOGI(TAG, "🔒 Force disconnecting BLE connection (conn_id=%d)", current_conn_id);
+    
+    // Use esp_ble_gatts_close to forcefully close the GATT connection
+    esp_err_t ret = esp_ble_gatts_close(current_gatts_if, current_conn_id);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "🔒 Failed to force disconnect: %s", esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "🔒 Force disconnect initiated successfully");
+    }
 }

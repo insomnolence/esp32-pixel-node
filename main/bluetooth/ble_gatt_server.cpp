@@ -6,6 +6,7 @@ const char* BLEGattServer::TAG = "BLEGattServer";
 
 // Static member to hold the instance pointer
 BLEGattServer* BLEGattServer::instance = nullptr;
+uint32_t BLEGattServer::callback_counter = 0;
 
 BLEGattServer::BLEGattServer() {
     adv_params = {
@@ -114,12 +115,13 @@ esp_err_t BLEGattServer::registerGattApp(uint16_t app_id) {
 }
 
 esp_err_t BLEGattServer::startAdvertising() {
+    ESP_LOGI(TAG, "🔍 Attempting to start BLE advertising...");
     esp_err_t ret = esp_ble_gap_start_advertising(&adv_params);
     if (ret) {
-        ESP_LOGE(TAG, "Advertising start failed");
+        ESP_LOGE(TAG, "🚨 Advertising start FAILED: %s", esp_err_to_name(ret));
         return ret;
-        }
-    ESP_LOGI(TAG, "Advertising started");
+    }
+    ESP_LOGI(TAG, "🔍 BLE advertising started successfully");
     return ESP_OK;
 }
 
@@ -134,15 +136,43 @@ esp_err_t BLEGattServer::setDeviceName(const char *device_name){
 }
 
 void BLEGattServer::gattsEventHandler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) {
+    callback_counter++; // Increment callback counter for debugging
+    ESP_LOGI(BLEGattServer::TAG, "🔍 GATTS Event Handler Called: event=%d, gatts_if=%d, count=%lu", event, gatts_if, callback_counter);
+    
     if (BLEGattServer::instance == nullptr) {
-        ESP_LOGE(BLEGattServer::TAG, "BLEGattServer instance is null!");
+        ESP_LOGE(BLEGattServer::TAG, "🚨 BLEGattServer instance is null! Event=%d ignored", event);
         return;
     }
+    
+    ESP_LOGI(BLEGattServer::TAG, "🔍 Forwarding to handleGattsEvent");
     BLEGattServer::instance->handleGattsEvent(event, gatts_if, param);
 }
 
 void BLEGattServer::handleGattsEvent(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) {
-    ESP_LOGI(BLEGattServer::TAG, "Event: %d, gatts_if: %d", event, gatts_if);
+    ESP_LOGI(BLEGattServer::TAG, "🔍 handleGattsEvent: Event=%d, gatts_if=%d", event, gatts_if);
+    
+    // Log common connection events in detail
+    switch(event) {
+        case ESP_GATTS_REG_EVT:
+            ESP_LOGI(TAG, "🔍 ESP_GATTS_REG_EVT: App registration event");
+            break;
+        case ESP_GATTS_CONNECT_EVT:
+            ESP_LOGI(TAG, "🔥🔥 ESP_GATTS_CONNECT_EVT: BLE CLIENT CONNECTION DETECTED!");
+            ESP_LOGI(TAG, "🔥 Connection ID: %d", param->connect.conn_id);
+            break;
+        case ESP_GATTS_DISCONNECT_EVT:
+            ESP_LOGI(TAG, "🔥 ESP_GATTS_DISCONNECT_EVT: BLE CLIENT DISCONNECTED");
+            break;
+        case ESP_GATTS_WRITE_EVT:
+            ESP_LOGI(TAG, "🔍 ESP_GATTS_WRITE_EVT: Data write received");
+            break;
+        case ESP_GATTS_READ_EVT:
+            ESP_LOGI(TAG, "🔍 ESP_GATTS_READ_EVT: Data read requested");
+            break;
+        default:
+            ESP_LOGI(TAG, "🔍 Other GATTS event: %d", event);
+            break;
+    }
     if (event == ESP_GATTS_REG_EVT) {
         if (param->reg.status == ESP_GATT_OK) {
             // Find the appropriate profile
@@ -190,6 +220,53 @@ void BLEGattServer::addProfile(std::shared_ptr<GattProfile> profile) {
 
 void BLEGattServer::setAdvertisingCallback(std::function<void()> callback) {
     advertisingCallback = callback;
+}
+
+void BLEGattServer::validateGattServiceHealth() {
+    ESP_LOGI(TAG, "🔍 === GATT SERVICE HEALTH CHECK ===");
+    
+    // Check instance pointer
+    ESP_LOGI(TAG, "🔍 BLEGattServer instance: %s", (instance != nullptr) ? "VALID" : "NULL");
+    
+    // Check profile list
+    ESP_LOGI(TAG, "🔍 Registered profiles: %zu", profile_list.size());
+    
+    // Check Bluedroid status
+    esp_bluedroid_status_t bt_status = esp_bluedroid_get_status();
+    ESP_LOGI(TAG, "🔍 Bluedroid status: %d (0=uninitialized, 1=initialized, 2=enabled)", bt_status);
+    
+    // Test if we can trigger a dummy GATT event (this should help identify callback corruption)
+    ESP_LOGI(TAG, "🔍 Testing GATT event handler accessibility...");
+    if (instance != nullptr) {
+        ESP_LOGI(TAG, "🔍 Instance accessible - GATT callbacks should work");
+    } else {
+        ESP_LOGE(TAG, "🔍 ❌ Instance is NULL - GATT callbacks WILL FAIL!");
+    }
+    
+    ESP_LOGI(TAG, "🔍 === END GATT HEALTH CHECK ===");
+}
+
+void BLEGattServer::staticValidateGattHealth() {
+    ESP_LOGI(TAG, "🔍 === STATIC GATT HEALTH CHECK ===");
+    
+    // Check static instance pointer
+    ESP_LOGI(TAG, "🔍 Static instance pointer: %s", (instance != nullptr) ? "VALID" : "NULL");
+    ESP_LOGI(TAG, "🔍 Total GATT callbacks received: %lu", callback_counter);
+    
+    // Check Bluedroid status
+    esp_bluedroid_status_t bt_status = esp_bluedroid_get_status();
+    ESP_LOGI(TAG, "🔍 Bluedroid status: %d (0=uninit, 1=init, 2=enabled)", bt_status);
+    
+    // If instance exists, call the full health check
+    if (instance != nullptr) {
+        ESP_LOGI(TAG, "🔍 Instance found - calling full health check");
+        instance->validateGattServiceHealth();
+    } else {
+        ESP_LOGE(TAG, "🔍 ❌ CRITICAL: Instance is NULL - GATT callbacks WILL NOT WORK!");
+        ESP_LOGE(TAG, "🔍 ❌ This explains why BLE connections aren't generating events!");
+    }
+    
+    ESP_LOGI(TAG, "🔍 === END STATIC GATT HEALTH CHECK ===");
 }
 
 

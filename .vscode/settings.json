@@ -15,8 +15,7 @@
     "*.inc": "cpp"
   },
   "idf.openOcdConfigs": [
-    "interface/ftdi/esp32_devkitj_v1.cfg",
-    "target/esp32.cfg"
+    "board/esp32c3-builtin.cfg"
   ],
   "idf.pythonInstallPath": "/usr/bin/python3",
   "idf.customExtraVars": {

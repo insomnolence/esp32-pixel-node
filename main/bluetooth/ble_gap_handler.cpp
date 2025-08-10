@@ -19,7 +19,11 @@ esp_err_t BLEGapHandler::registerGapCallbacks() {
 }
 
 void BLEGapHandler::gapEventHandler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param) {
-    ESP_LOGI(TAG, "GAP event %d", event);
+    ESP_LOGI(TAG, "🔍 GAP event %d received", event);
+    
+    // Log all events with detailed info for debugging
+    ESP_LOGI(TAG, "🔍 GAP Event Details: type=%d", event);
+    
     switch (event) {
         case ESP_GAP_BLE_ADV_DATA_SET_COMPLETE_EVT:
             ESP_LOGI(TAG, "Advertising data set complete");

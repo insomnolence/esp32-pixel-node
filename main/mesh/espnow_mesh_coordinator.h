@@ -9,12 +9,18 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
+#include "freertos/semphr.h"
 #include "../packet/generic_packet.h"
 #include <functional>
 #include <memory>
 #include <set>
 #include <vector>
 #include <ctime>
+
+// Forward declarations for adaptive mesh components
+class NeighborManager;
+class TopologyManager; 
+class AdaptiveRouter;
 
 #define ESPNOW_MESH_MAX_PAYLOAD_LEN 200
 #define ESPNOW_MESH_DEFAULT_TTL 4
@@ -35,7 +41,14 @@ enum class MeshPacketType : uint8_t {
     ELECTION_DISCOVERY = 0x06,   // New election system: Discovery phase
     ELECTION_CANDIDATE = 0x07,   // New election system: Candidate announcement  
     ELECTION_VOTE = 0x08,        // New election system: Vote casting
-    ELECTION_RESULT = 0x09       // New election system: Result announcement
+    ELECTION_RESULT = 0x09,      // New election system: Result announcement
+    
+    // Adaptive Mesh Packet Types (0x10-0x1F range)
+    ADAPTIVE_NEIGHBOR_DISCOVERY = 0x10, // Neighbor discovery beacon with RSSI
+    ADAPTIVE_TOPOLOGY_UPDATE = 0x11,    // Network topology information sharing
+    ADAPTIVE_ROUTE_REQUEST = 0x12,      // Multi-path route discovery
+    ADAPTIVE_ROUTE_REPLY = 0x13,        // Route discovery response
+    ADAPTIVE_DATA_FORWARD = 0x14        // Smart packet forwarding with routing
 };
 
 enum class ElectionState : uint8_t {
@@ -56,15 +69,20 @@ struct ESPNowMeshPacket {
     uint8_t data[ESPNOW_MESH_MAX_PAYLOAD_LEN - 20]; // Reserve space for header
 } __attribute__((packed));
 
-class PacketTracker {
+class BoundedPacketTracker {
 public:
+    BoundedPacketTracker();
     bool isPacketSeen(uint32_t packet_id);
     void cleanup();
     
 private:
-    std::set<uint32_t> seen_packets;
-    uint32_t last_cleanup = 0;
+    static const size_t PACKET_HISTORY_SIZE = 128; // Power of 2 for fast modulo
     static const uint32_t CLEANUP_INTERVAL_MS = 30000; // 30 seconds
+    
+    uint32_t packet_history[PACKET_HISTORY_SIZE];
+    size_t history_index;
+    size_t history_count;
+    uint32_t last_cleanup;
 };
 
 class ESPNowMeshCoordinator {
@@ -79,6 +97,7 @@ public:
     // Role management
     NodeRole getCurrentRole() const;
     bool isRootNode() const;
+    bool isBleConnected() const { return ble_connected; }
     
     // BLE integration - maintains same interface as old MeshCoordinator
     void onBleConnected();
@@ -108,11 +127,28 @@ public:
     // BLE connection priority comparison
     uint32_t getBleConnectionAge() const;
     
+    // BLE stabilization - prevent connections immediately after autonomous election
+    bool shouldAcceptBleConnection() const;
+    
     // Advanced election system
     void startAdvancedElection();
     void processElectionPacket(const ESPNowMeshPacket& packet);
     uint32_t calculateNodePriority() const;
     void checkElectionTimeout();
+    
+    // Adaptive mesh control (parallel implementation)
+    esp_err_t enableAdaptiveMesh();
+    void disableAdaptiveMesh();
+    bool isAdaptiveMeshEnabled() const;
+    
+    // Memory and performance monitoring
+    size_t getActiveNeighborCount() const;
+    
+    // Adaptive mesh status and monitoring
+    void printAdaptiveMeshStatus() const;
+    
+    // Testing and simulation (for single-device validation)
+    void simulateNeighborDiscovery(uint16_t simulated_node_id, int8_t rssi);
     
     // Network health monitoring
     struct NetworkStats {
@@ -145,6 +181,7 @@ public:
 private:
     static const char* TAG;
     static ESPNowMeshCoordinator* instance;
+    static SemaphoreHandle_t instance_mutex;
     
     NodeRole current_role;
     uint16_t node_id;
@@ -153,7 +190,7 @@ private:
     uint8_t local_mac[6];
     
     TaskHandle_t mesh_task_handle;
-    PacketTracker packet_tracker;
+    BoundedPacketTracker packet_tracker;
     NetworkStats network_stats;
     
     // Autonomous root election
@@ -169,12 +206,21 @@ private:
     ElectionState election_state;
     uint32_t election_start_time;
     uint32_t election_phase_timeout;
-    std::vector<ElectionCandidate> election_candidates;
+    static const size_t MAX_ELECTION_CANDIDATES = 16; // Bounded election candidates
+    ElectionCandidate election_candidates[MAX_ELECTION_CANDIDATES];
+    size_t election_candidate_count;
     uint16_t elected_root_node_id;
     uint32_t last_election_attempt;
+    uint32_t autonomous_root_timestamp;  // Track when we became autonomous root for BLE stabilization
     
     std::function<void(const GenericPacket&)> packet_callback;
     std::function<void(NodeRole, NodeRole)> role_change_callback;
+    
+    // Adaptive mesh components (parallel implementation)
+    std::unique_ptr<NeighborManager> neighbor_manager;
+    std::unique_ptr<TopologyManager> topology_manager;
+    std::unique_ptr<AdaptiveRouter> adaptive_router;
+    bool adaptive_mesh_enabled;
     
     // ESP-NOW callbacks
     static void onESPNowSent(const uint8_t *mac_addr, esp_now_send_status_t status);
@@ -186,6 +232,10 @@ private:
     esp_err_t sendMeshPacket(const ESPNowMeshPacket& packet);
     esp_err_t sendMeshPacketWithRetry(const ESPNowMeshPacket& packet, int max_retries);
     esp_err_t sendMeshPacketHighPriority(const ESPNowMeshPacket& packet); // Fast path for time-sensitive data
+    
+    // Adaptive mesh unicast transmission
+    esp_err_t sendMeshPacketToNode(const ESPNowMeshPacket& packet, uint16_t target_node_id);
+    esp_err_t sendMeshPacketToAllNeighbors(const ESPNowMeshPacket& packet);
     
     // Packet creation
     ESPNowMeshPacket createMeshPacket(MeshPacketType type, const GenericPacket& payload, uint8_t ttl = ESPNOW_MESH_DEFAULT_TTL);
@@ -214,6 +264,12 @@ private:
     void processElectionResult(const ESPNowMeshPacket& packet);
     void advanceElectionPhase();
     ElectionCandidate selectBestCandidate() const;
+    
+    // Adaptive mesh packet processing methods
+    void processAdaptiveNeighborDiscovery(const ESPNowMeshPacket& packet);
+    void processAdaptiveTopologyUpdate(const ESPNowMeshPacket& packet);
+    void processAdaptiveRouting(const ESPNowMeshPacket& packet);
+    void processAdaptiveDataForward(const ESPNowMeshPacket& packet);
 };
 
 #endif // ESPNOW_MESH_COORDINATOR_H_
