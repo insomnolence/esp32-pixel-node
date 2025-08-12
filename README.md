@@ -1,5 +1,8 @@
-# Note: This is a personal project that is ongoing. Don't expect any greatness here. 
-## And yes, I did use AI as the tool that it is. Cast no stones.
+> **Note:** This is a personal project that is ongoing.
+>
+> *And yes, I did use AI as the tool that it is for some parts. Cast no stones*
+
+---
 
 # ESP32 LED Mesh Network - Configuration Guide
 
