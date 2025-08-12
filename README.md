@@ -1,3 +1,6 @@
+# Note: This is a personal project that is ongoing. Don't expect any greatness here. 
+## And yes, I did use AI as the tool that it is. Cast no stones.
+
 # ESP32 LED Mesh Network - Configuration Guide
 
 This project implements a sophisticated LED mesh network with autonomous root selection, BLE connectivity, and real-time LED pattern synchronization. This guide explains how to configure the system for your specific hardware and requirements.
