@@ -221,8 +221,8 @@ esp_err_t ESPNowMeshCoordinator::stop() {
 }
 
 void ESPNowMeshCoordinator::onBleConnected() {
-    ESP_LOGI(TAG, "🔥 BLE connected - becoming mesh root with mobile control (Node 0x%04X)", node_id);
-    ESP_LOGI(TAG, "🔥 Previous role: %s", getRoleString());
+    ESP_LOGI(TAG, "BLE connected - becoming mesh root with mobile control (Node 0x%04X)", node_id);
+    ESP_LOGD(TAG, "Previous role: %s", getRoleString());
     
     ble_connected = true;
     
@@ -230,21 +230,21 @@ void ESPNowMeshCoordinator::onBleConnected() {
     ble_connection_uptime_ms = esp_timer_get_time() / 1000;
     has_ble_connection_timestamp = true;
     
-    ESP_LOGI(TAG, "🔥 BLE connection timestamp recorded: uptime %lu ms", ble_connection_uptime_ms);
+    ESP_LOGD(TAG, "BLE connection timestamp recorded: uptime %lu ms", ble_connection_uptime_ms);
     
     // BLE connection always takes priority over autonomous root
     if (current_role == NodeRole::MESH_ROOT_AUTONOMOUS) {
-        ESP_LOGI(TAG, "🔥 Upgrading from autonomous root to BLE-controlled root");
+        ESP_LOGD(TAG, "Upgrading from autonomous root to BLE-controlled root");
     }
     
-    ESP_LOGI(TAG, "🔥 Transitioning to MESH_ROOT_ACTIVE role");
+    ESP_LOGD(TAG, "Transitioning to MESH_ROOT_ACTIVE role");
     transitionToRole(NodeRole::MESH_ROOT_ACTIVE);
-    ESP_LOGI(TAG, "🔥 Role transition complete: %s", getRoleString());
+    ESP_LOGD(TAG, "Role transition complete: %s", getRoleString());
     
     // Immediately announce BLE root status to make other autonomous roots step down
-    ESP_LOGI(TAG, "🔥 Sending immediate BLE root announcement to mesh");
+    ESP_LOGD(TAG, "Sending immediate BLE root announcement to mesh");
     sendRootAnnouncement();
-    ESP_LOGI(TAG, "🔥 BLE root announcement sent - other autonomous roots should step down");
+    ESP_LOGD(TAG, "BLE root announcement sent - other autonomous roots should step down");
 }
 
 void ESPNowMeshCoordinator::onBleDisconnected() {
@@ -838,8 +838,12 @@ void ESPNowMeshCoordinator::checkForRootElection() {
         neighbor_manager->startNeighborDiscovery();
     }
     
+    // All roles should continue neighbor discovery, but only clients participate in root election
+    // Root nodes need neighbor discovery for accurate mesh analytics
+    
     // Only clients can participate in autonomous root election
     if (current_role != NodeRole::MESH_CLIENT) {
+        ESP_LOGD(TAG, "Skipping root election - not a mesh client (role: %d)", static_cast<int>(current_role));
         return;
     }
     
@@ -858,7 +862,7 @@ void ESPNowMeshCoordinator::checkForRootElection() {
     
     // If election timer expired and no root heard, check for single node scenario
     if (current_time >= election_timer && !heard_from_root && !ble_connected) {
-        ESP_LOGI(TAG, "🗳️ No root detected for 30+ seconds - checking for other nodes (Node 0x%04X, BLE: %s, Role: %s)", 
+        ESP_LOGI(TAG, "No root detected for 30+ seconds - checking for other nodes (Node 0x%04X, BLE: %s, Role: %s)", 
                  node_id, ble_connected ? "connected" : "disconnected", getRoleString());
         
         // Send discovery packet to check for other nodes
@@ -1647,6 +1651,7 @@ esp_err_t ESPNowMeshCoordinator::enableAdaptiveMesh() {
             neighbor_manager.reset();
             return ESP_FAIL;
         }
+        neighbor_manager->start();
     }
     
     if (!topology_manager) {
@@ -1657,6 +1662,15 @@ esp_err_t ESPNowMeshCoordinator::enableAdaptiveMesh() {
             neighbor_manager.reset();
             return ESP_FAIL;
         }
+        
+        // Connect topology broadcast callback to ESP-NOW transmission  
+        // Use minimal stack footprint to avoid overflow
+        topology_manager->setBroadcastCallback([this](const uint8_t* data, size_t len) {
+            // Send directly via ESP-NOW to minimize stack usage
+            esp_err_t result = esp_now_send(nullptr, data, len);  // Broadcast
+            ESP_LOGD(TAG, "📡 Topology broadcast: %s (%zu bytes)", 
+                     result == ESP_OK ? "OK" : esp_err_to_name(result), len);
+        });
     }
     
     if (!adaptive_router) {
@@ -1695,6 +1709,9 @@ esp_err_t ESPNowMeshCoordinator::enableAdaptiveMesh() {
     neighbor_manager->startNeighborDiscovery();
     ESP_LOGI(TAG, "Started neighbor discovery process with ESP-NOW transmission");
     
+    topology_manager->start();
+    ESP_LOGI(TAG, "Started topology management process");
+    
     adaptive_mesh_enabled = true;
     ESP_LOGI(TAG, "Adaptive mesh system enabled successfully");
     
@@ -1722,6 +1739,42 @@ bool ESPNowMeshCoordinator::isAdaptiveMeshEnabled() const {
     return adaptive_mesh_enabled;
 }
 
+void ESPNowMeshCoordinator::updateAdaptiveMesh() {
+    static uint32_t updateCount = 0;
+    if (++updateCount % 10 == 1) { // Log every 10th call to avoid spam
+        ESP_LOGD(TAG, "updateAdaptiveMesh() called (#%u) - enabled: %s", updateCount, adaptive_mesh_enabled ? "YES" : "NO");
+    }
+    
+    if (!adaptive_mesh_enabled) {
+        if (updateCount % 10 == 1) {
+            ESP_LOGD(TAG, "Adaptive mesh not enabled - skipping update");
+        }
+        return;
+    }
+    
+    // Update all adaptive mesh components with their internal timing logic
+    if (neighbor_manager) {
+        if (updateCount % 10 == 1) {
+            ESP_LOGD(TAG, "Calling neighbor_manager->startNeighborDiscovery()");
+        }
+        // This handles periodic beacon sending (5s interval) and table cleanup
+        neighbor_manager->startNeighborDiscovery();
+    } else {
+        ESP_LOGD(TAG, "neighbor_manager is null!");
+    }
+    
+    if (topology_manager) {
+        ESP_LOGD(TAG, "Calling topology_manager->updateTopology()");
+        topology_manager->updateTopology();
+        ESP_LOGV(TAG, "topology_manager->updateTopology() completed");
+    } else {
+        ESP_LOGD(TAG, "topology_manager is null!");
+    }
+    if (adaptive_router) {
+        adaptive_router->updateRoutes();
+    }
+}
+
 size_t ESPNowMeshCoordinator::getActiveNeighborCount() const {
     if (neighbor_manager) {
         return neighbor_manager->getActiveNeighborCount();
@@ -1729,9 +1782,17 @@ size_t ESPNowMeshCoordinator::getActiveNeighborCount() const {
     return 0;
 }
 
+size_t ESPNowMeshCoordinator::getReachableNodeCount() const {
+    if (topology_manager) {
+        // Include the local node in the total count
+        return topology_manager->getReachableNodeCount() + 1;
+    }
+    return 1; // At minimum, count the local node
+}
+
 void ESPNowMeshCoordinator::printAdaptiveMeshStatus() const {
     if (!adaptive_mesh_enabled) {
-        ESP_LOGI(TAG, "🔄 Adaptive mesh system is DISABLED - using flat mesh");
+        ESP_LOGD(TAG, "Adaptive mesh system is DISABLED - using flat mesh");
         return;
     }
     
@@ -1740,11 +1801,11 @@ void ESPNowMeshCoordinator::printAdaptiveMeshStatus() const {
     // NeighborManager status
     if (neighbor_manager) {
         const auto& neighbor_stats = neighbor_manager->getStats();
-        ESP_LOGI(TAG, "📡 Neighbor Discovery:");
-        ESP_LOGI(TAG, "  • Active Neighbors: %d", neighbor_stats.current_neighbor_count);
-        ESP_LOGI(TAG, "  • Total Discovered: %lu", neighbor_stats.neighbors_discovered);
-        ESP_LOGI(TAG, "  • Beacons Sent: %lu", neighbor_stats.beacons_sent);
-        ESP_LOGI(TAG, "  • Beacons Received: %lu", neighbor_stats.beacons_received);
+        ESP_LOGD(TAG, "Neighbor Discovery:");
+        ESP_LOGD(TAG, "  • Active Neighbors: %d", neighbor_stats.current_neighbor_count);
+        ESP_LOGD(TAG, "  • Total Discovered: %lu", neighbor_stats.neighbors_discovered);
+        ESP_LOGD(TAG, "  • Beacons Sent: %lu", neighbor_stats.beacons_sent);
+        ESP_LOGD(TAG, "  • Beacons Received: %lu", neighbor_stats.beacons_received);
         
         if (neighbor_stats.current_neighbor_count > 0) {
             neighbor_manager->printNeighborTable();

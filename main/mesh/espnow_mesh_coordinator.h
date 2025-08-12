@@ -140,9 +140,11 @@ public:
     esp_err_t enableAdaptiveMesh();
     void disableAdaptiveMesh();
     bool isAdaptiveMeshEnabled() const;
+    void updateAdaptiveMesh();
     
     // Memory and performance monitoring
     size_t getActiveNeighborCount() const;
+    size_t getReachableNodeCount() const;
     
     // Adaptive mesh status and monitoring
     void printAdaptiveMeshStatus() const;

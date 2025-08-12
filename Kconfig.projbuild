@@ -1,0 +1,218 @@
+menu "ESP32 LED Mesh Configuration"
+
+    menu "LED Configuration"
+        config LED_PIN
+            int "LED Strip GPIO Pin"
+            range 0 48
+            default 7 if IDF_TARGET_ESP32C3
+            default 12 if IDF_TARGET_ESP32
+            default 7 if IDF_TARGET_ESP32S3
+            default 7
+            help
+                GPIO pin connected to the LED strip data line.
+                ESP32: Recommended pin 12 (avoid strapping pins)
+                ESP32C3: Recommended pin 7 (avoid strapping pins 2,8,9)
+                ESP32S3: Recommended pin 7
+
+        config LED_COUNT
+            int "Number of LEDs"
+            range 1 1000
+            default 144
+            help
+                Number of LEDs in the strip to control.
+
+        config PHYSICAL_LED_STRIP_LENGTH  
+            int "Physical LED Strip Length"
+            range 1 1000
+            default 144
+            help
+                Total number of LEDs on the physical strip.
+                Used for clearing unused LEDs when LED_COUNT < strip length.
+
+        config LED_UPDATE_INTERVAL_MS
+            int "LED Update Interval (ms)"
+            range 1 1000
+            default 20
+            help
+                LED update interval in milliseconds.
+                20ms = 50 FPS, 15ms = 67 FPS, 10ms = 100 FPS
+
+        config LED_TASK_STACK_SIZE
+            int "LED Task Stack Size"
+            range 2048 8192
+            default 4096
+            help
+                Stack size for the LED processing task (ESP32 dual-core mode).
+
+    endmenu
+
+    menu "Mesh Network Configuration"
+        config MESH_CHANNEL
+            int "ESP-NOW Channel"
+            range 1 14
+            default 6
+            help
+                WiFi channel for ESP-NOW mesh communication.
+                Should match your network environment.
+
+        config MESH_DEFAULT_TTL
+            int "Default Packet TTL"
+            range 1 10
+            default 4
+            help
+                Default Time-To-Live for mesh packets.
+                Maximum number of hops a packet can travel.
+
+        config MESH_MAX_PAYLOAD_LEN
+            int "Maximum Payload Length"
+            range 1 250
+            default 200
+            help
+                Maximum payload size for mesh packets.
+                Limited by ESP-NOW maximum packet size (250 bytes).
+
+        config MESH_CLEANUP_INTERVAL_MS
+            int "Packet Tracker Cleanup Interval (ms)"
+            range 5000 300000
+            default 30000
+            help
+                Interval for cleaning up old packet tracking entries.
+
+        config MESH_ELECTION_TIMEOUT_MS
+            int "Election Timeout (ms)"  
+            range 10000 120000
+            default 30000
+            help
+                Timeout for mesh root election process.
+
+        config MESH_ROOT_ANNOUNCEMENT_INTERVAL_MS
+            int "Root Announcement Interval (ms)"
+            range 1000 30000
+            default 5000
+            help
+                Interval for root node announcements.
+
+        config MESH_ENCRYPTION_ENABLED
+            bool "Enable Mesh Encryption"
+            default n
+            help
+                Enable ESP-NOW encryption for mesh communication.
+                Requires pre-shared key configuration.
+
+    endmenu
+
+    menu "BLE Configuration"
+        config BLE_DEVICE_NAME
+            string "BLE Device Name"
+            default "ESP_LED_NODE"
+            help
+                Bluetooth device name advertised to mobile apps.
+                Maximum 30 characters.
+
+        config BLE_SERVICE_UUID
+            string "BLE Service UUID"
+            default "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
+            help
+                BLE GATT service UUID for LED control.
+
+        config BLE_CHARACTERISTIC_UUID
+            string "BLE Characteristic UUID"
+            default "6e400002-b5a3-f393-e0a9-e50e24dcca9e"
+            help
+                BLE GATT characteristic UUID for packet data.
+
+        config BLE_MAX_PACKET_SIZE
+            int "Maximum BLE Packet Size"
+            range 20 512
+            default 244
+            help
+                Maximum size for BLE packet data.
+
+        config BLE_SECURITY_ENABLED
+            bool "Enable BLE Security"
+            default n
+            help
+                Enable BLE pairing and encryption.
+                Requires PIN/passkey authentication.
+
+    endmenu
+
+    menu "System Configuration"
+        config MAIN_LOOP_DELAY_MS
+            int "Main Loop Delay (ms)"
+            range 1 1000
+            default 15
+            help
+                Main application loop delay in milliseconds.
+                Lower values = more responsive but higher CPU usage.
+
+        config MUTEX_TIMEOUT_MS
+            int "Default Mutex Timeout (ms)"
+            range 1 10000
+            default 100
+            help
+                Default timeout for mutex operations.
+
+        config SYSTEM_TASK_PRIORITY
+            int "System Task Priority"
+            range 1 25
+            default 5
+            help
+                Priority for system management tasks.
+
+        config LED_TASK_PRIORITY
+            int "LED Task Priority"
+            range 1 25
+            default 10
+            help
+                Priority for LED processing task (higher = more priority).
+
+    endmenu
+
+    menu "Memory Management"
+        config HEAP_WARNING_THRESHOLD_BYTES
+            int "Heap Warning Threshold (bytes)"
+            range 4096 200000
+            default 32768
+            help
+                Free heap threshold for low memory warnings.
+
+        config HEAP_CRITICAL_THRESHOLD_BYTES
+            int "Heap Critical Threshold (bytes)"
+            range 2048 100000
+            default 16384
+            help
+                Free heap threshold for critical memory warnings.
+
+        config MEMORY_MONITOR_INTERVAL_MS
+            int "Memory Monitor Interval (ms)"
+            range 1000 60000
+            default 10000
+            help
+                Interval for memory usage monitoring.
+
+    endmenu
+
+    menu "Debug Configuration"
+        config DEBUG_LOGGING_ENABLED
+            bool "Enable Debug Logging"
+            default y
+            help
+                Enable detailed debug logging output.
+
+        config NETWORK_STATS_ENABLED  
+            bool "Enable Network Statistics"
+            default y
+            help
+                Enable mesh network statistics collection.
+
+        config LOG_BUFFER_SIZE
+            int "Log Buffer Size"
+            range 256 4096
+            default 1024
+            help
+                Size of internal log buffer.
+
+    endmenu
+
+endmenu

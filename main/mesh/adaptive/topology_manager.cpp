@@ -71,17 +71,18 @@ esp_err_t TopologyManager::stop() {
 
 void TopologyManager::updateTopology() {
     if (!is_running_ || !neighbor_manager_) {
+        ESP_LOGD(TAG, "updateTopology() early return: is_running=%s, neighbor_manager=%p", 
+                 is_running_ ? "YES" : "NO", neighbor_manager_);
         return;
     }
     
     uint32_t current_time = getCurrentTimeMs();
     
     // Update topology from neighbor information
-    std::array<NeighborInfo, MAX_NEIGHBORS> neighbors;
-    size_t neighbor_count = neighbor_manager_->getAllNeighbors(neighbors);
+    size_t neighbor_count = neighbor_manager_->getAllNeighbors(neighbor_buffer_);
     
     for (size_t i = 0; i < neighbor_count; ++i) {
-        updateNodeFromNeighbor(neighbors[i]);
+        updateNodeFromNeighbor(neighbor_buffer_[i]);
     }
     
     // Remove stale nodes
@@ -94,9 +95,14 @@ void TopologyManager::updateTopology() {
     }
     
     // Broadcast topology updates
-    if (current_time - last_topology_update_ms_ >= TOPOLOGY_UPDATE_INTERVAL_MS) {
+    uint32_t time_since_last_update = current_time - last_topology_update_ms_;
+    
+    if (time_since_last_update >= TOPOLOGY_UPDATE_INTERVAL_MS) {
+        ESP_LOGD(TAG, "Topology update timer triggered: %lu ms since last update", time_since_last_update);
         broadcastTopologyUpdate();
         last_topology_update_ms_ = current_time;
+    } else {
+        // Reduced verbose timer logging
     }
 }
 
@@ -155,8 +161,8 @@ void TopologyManager::processTopologyUpdate(const uint8_t* sender_mac, const uin
         notifyTopologyChange(*local_node, is_new_node);
     }
     
-    ESP_LOGV(TAG, "Processed topology update from node %u with %u nodes", 
-             update->sender_node_id, update->node_count);
+    ESP_LOGD(TAG, "Received topology update from node %u: seq=%u, nodes=%u", 
+             update->sender_node_id, update->update_sequence, update->node_count);
 }
 
 void TopologyManager::broadcastTopologyUpdate() {
@@ -177,14 +183,18 @@ void TopologyManager::broadcastTopologyUpdate() {
     }
     update.node_count = packed_count;
     
-    // Note: Actual transmission will be handled by the mesh coordinator
-    // This method prepares the topology update structure
-    
     stats_.topology_updates_sent++;
     stats_.last_full_update_ms = getCurrentTimeMs();
     
-    ESP_LOGV(TAG, "Prepared topology update: seq=%u, nodes=%u", 
-             update.update_sequence, update.node_count);
+    ESP_LOGD(TAG, "Broadcasting topology update: seq=%u, nodes=%u, reachable_count=%zu", 
+             update.update_sequence, update.node_count, getReachableNodeCount());
+             
+    // Execute broadcast callback to actually send the packet
+    if (broadcast_callback_) {
+        broadcast_callback_(reinterpret_cast<const uint8_t*>(&update), sizeof(update));
+    } else {
+        ESP_LOGW(TAG, "⚠️ No broadcast callback set - topology update not sent!");
+    }
 }
 
 AdaptiveNodeRole TopologyManager::determineLocalRole() const {
@@ -344,6 +354,11 @@ void TopologyManager::setRoleChangeCallback(std::function<void(uint16_t, Adaptiv
     role_change_callback_ = callback;
 }
 
+void TopologyManager::setBroadcastCallback(std::function<void(const uint8_t*, size_t)> callback) {
+    broadcast_callback_ = callback;
+    ESP_LOGD(TAG, "Broadcast callback set - topology updates will now be transmitted");
+}
+
 const TopologyManager::TopologyStats& TopologyManager::getStats() const {
     return stats_;
 }
@@ -393,7 +408,13 @@ TopologyNode* TopologyManager::findOrCreateNode(uint16_t node_id) {
     if (node_count_ < MAX_TOPOLOGY_NODES) {
         TopologyNode& new_node = topology_nodes_[node_count_++];
         new_node.node_id = node_id;
+        memset(new_node.mac_addr, 0, 6);
+        new_node.role = AdaptiveNodeRole::UNKNOWN;
+        new_node.neighbor_count = 0;
+        new_node.best_rssi = -100;
+        new_node.hop_count = 0xFF; // Unreachable
         new_node.last_update_ms = getCurrentTimeMs();
+        new_node.is_reachable = false;
         return &new_node;
     }
     
@@ -445,7 +466,7 @@ void TopologyManager::removeStaleNodes() {
         if (node.is_reachable && 
             current_time - node.last_update_ms > TOPOLOGY_NODE_TIMEOUT_MS) {
             
-            ESP_LOGI(TAG, "Node %u timed out from topology", node.node_id);
+            ESP_LOGD(TAG, "Node %u timed out from topology", node.node_id);
             node.is_reachable = false;
             removed_count++;
             
@@ -596,7 +617,7 @@ bool TopologyManager::hasNeighborWithRole(uint16_t node_id, AdaptiveNodeRole rol
 }
 
 void TopologyManager::logRoleChange(uint16_t node_id, AdaptiveNodeRole old_role, AdaptiveNodeRole new_role) const {
-    ESP_LOGI(TAG, "Node %u role changed: %s -> %s", 
+    ESP_LOGD(TAG, "Node %u role changed: %s -> %s", 
              node_id, getRoleString(old_role), getRoleString(new_role));
 }
 

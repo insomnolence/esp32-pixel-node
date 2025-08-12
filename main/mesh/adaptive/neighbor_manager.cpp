@@ -81,10 +81,10 @@ void NeighborManager::sendDiscoveryBeacon() {
     // Send beacon through mesh coordinator if callback is set
     if (beacon_send_callback_) {
         beacon_send_callback_(reinterpret_cast<const uint8_t*>(&beacon), sizeof(beacon));
-        ESP_LOGD(TAG, "📡 Discovery beacon sent: seq=%u, neighbors=%u", 
+        ESP_LOGV(TAG, "Discovery beacon sent: seq=%u, neighbors=%u", 
                  beacon.beacon_sequence, beacon.neighbor_count);
     } else {
-        ESP_LOGW(TAG, "❌ No beacon send callback configured - beacon not transmitted");
+        ESP_LOGD(TAG, "No beacon send callback configured - beacon not transmitted");
     }
     
     stats_.beacons_sent++;
@@ -365,7 +365,7 @@ void NeighborManager::notifyNeighborUpdate(const NeighborInfo& neighbor, bool is
     }
     
     if (is_new) {
-        ESP_LOGI(TAG, "New neighbor: Node %u (" MACSTR ") RSSI=%d %s", 
+        ESP_LOGD(TAG, "New neighbor: Node %u (" MACSTR ") RSSI=%d %s", 
                  neighbor.node_id, MAC2STR(neighbor.mac_addr),
                  neighbor.current_rssi, getLinkQualityString(neighbor.link_quality));
     }

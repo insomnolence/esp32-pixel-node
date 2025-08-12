@@ -20,6 +20,7 @@ struct NetworkHealth {
     int8_t avg_signal_strength;   // Average RSSI in dBm
     uint16_t uptime_hours;        // System uptime in hours
     uint8_t mesh_role;            // 0=client, 1=root_ble, 2=root_autonomous
+    uint8_t total_nodes;          // Total nodes detected in mesh network
 } __attribute__((packed));
 
 // Network health status levels
@@ -39,7 +40,8 @@ public:
     void updateMetrics(const MeshStats& mesh_stats, 
                       uint8_t neighbor_count, 
                       int8_t avg_rssi,
-                      uint8_t role);
+                      uint8_t role,
+                      uint8_t total_nodes);
     
     // Get current health for BLE reporting
     NetworkHealth getCurrentHealth() const;

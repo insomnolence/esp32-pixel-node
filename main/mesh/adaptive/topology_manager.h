@@ -27,17 +27,6 @@ struct TopologyNode {
     uint16_t hop_count;         // Hops from local node
     uint32_t last_update_ms;
     bool is_reachable;
-    
-    TopologyNode() {
-        node_id = 0;
-        memset(mac_addr, 0, 6);
-        role = AdaptiveNodeRole::UNKNOWN;
-        neighbor_count = 0;
-        best_rssi = -100;
-        hop_count = 0xFF; // Unreachable
-        last_update_ms = 0;
-        is_reachable = false;
-    }
 };
 
 struct TopologyUpdate {
@@ -87,6 +76,7 @@ public:
     // Callbacks
     void setTopologyChangeCallback(std::function<void(const TopologyNode&, bool)> callback);
     void setRoleChangeCallback(std::function<void(uint16_t, AdaptiveNodeRole, AdaptiveNodeRole)> callback);
+    void setBroadcastCallback(std::function<void(const uint8_t*, size_t)> callback);
     
     // Statistics and debugging
     struct TopologyStats {
@@ -119,6 +109,9 @@ private:
     size_t node_count_;
     AdaptiveNodeRole local_role_;
     
+    // Reusable buffer to avoid stack allocation
+    std::array<NeighborInfo, MAX_NEIGHBORS> neighbor_buffer_;
+    
     // Timing
     uint32_t last_topology_update_ms_;
     uint32_t last_role_analysis_ms_;
@@ -129,6 +122,7 @@ private:
     // Callbacks
     std::function<void(const TopologyNode&, bool)> topology_change_callback_;
     std::function<void(uint16_t, AdaptiveNodeRole, AdaptiveNodeRole)> role_change_callback_;
+    std::function<void(const uint8_t*, size_t)> broadcast_callback_;
     
     // Internal methods
     TopologyNode* findOrCreateNode(uint16_t node_id);

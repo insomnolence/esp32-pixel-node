@@ -4,6 +4,7 @@ idf_component_register(SRCS
     "bluetooth/ble_gap_handler.cpp"
     "bluetooth/gatt_profile.cpp" 
     "bluetooth/pixel_packet_profile.cpp"
+    "bluetooth/network_health_profile.cpp"
     "mesh/espnow_mesh_coordinator.cpp"
     "mesh/adaptive/neighbor_manager.cpp"
     "mesh/adaptive/topology_manager.cpp"

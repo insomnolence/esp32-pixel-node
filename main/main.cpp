@@ -4,6 +4,7 @@
 #include "system/nvs_manager.h"
 #include "system/network_health.h"
 #include "bluetooth/pixel_packet_profile.h"
+#include "bluetooth/network_health_profile.h"
 #include "mesh/espnow_mesh_coordinator.h"
 #include "packet/led_packet_processor.h"
 #include "packet/generic_packet.h"
@@ -24,6 +25,12 @@
 
 
 extern "C" void app_main(void) {
+    // Enable debug logging for neighbor discovery
+    esp_log_level_set("NeighborManager", ESP_LOG_DEBUG);
+    esp_log_level_set("ESPNowMeshCoordinator", ESP_LOG_DEBUG);
+    esp_log_level_set("NetworkHealthMonitor", ESP_LOG_DEBUG);
+    ESP_LOGI(MAIN_TAG, "🔍 Enabled debug logging for mesh neighbor discovery components");
+
     // Initialize NVS
     NvsManager nvsManager;
     if (nvsManager.init() != ESP_OK) {
@@ -71,11 +78,22 @@ extern "C" void app_main(void) {
         return;
     }
 
-    // Create Gatt Profiles here. Do this for each profile (In our case only PixelPacketProile for now)
+    // Create Gatt Profiles here. Do this for each profile
+    // 1. PixelPacketProfile for LED control commands
     const std::string service_uuid_str = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
     const std::string characteristic_uuid_str = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
     std::shared_ptr<PixelPacketProfile> pixel_packet_profile = std::make_shared<PixelPacketProfile>(service_uuid_str, characteristic_uuid_str);
     bleGattServer.addProfile(pixel_packet_profile);
+    
+    // 2. NetworkHealthProfile for mesh analytics
+    const std::string health_service_uuid_str = "12345678-1234-1234-1234-123456789abc";
+    const std::string health_characteristic_uuid_str = "87654321-4321-4321-4321-cba987654321";
+    std::shared_ptr<NetworkHealthProfile> health_profile = std::make_shared<NetworkHealthProfile>(health_service_uuid_str, health_characteristic_uuid_str);
+    bleGattServer.addProfile(health_profile);
+    
+    // Create NetworkHealth monitor
+    NetworkHealthMonitor networkHealthMonitor;
+    health_profile->setNetworkHealthMonitor(&networkHealthMonitor);
     
     // Create LED controller
     LEDController ledController;
@@ -176,8 +194,7 @@ extern "C" void app_main(void) {
     
     bleGattServer.startAdvertising();
 
-    // Initialize network health monitoring
-    NetworkHealthMonitor networkHealth;
+    // Network health monitoring is initialized above and connected to BLE profile
     
     ESP_LOGI(MAIN_TAG, "✅ ESP32 LED Mesh Node ready - Node ID: 0x%04X", meshCoordinator.getNodeId());
     ESP_LOGI(MAIN_TAG, "📱 Connect via BLE to '%s' to control LED patterns", DEVICE_NAME);
@@ -208,6 +225,17 @@ extern "C" void app_main(void) {
             lastRootAnnouncement = now;
         }
         
+        // Update adaptive mesh components for neighbor discovery and topology management
+        static uint32_t lastAdaptiveMeshUpdate = 0;
+        if (now - lastAdaptiveMeshUpdate >= 1000) { // Update every 1 second for responsive neighbor discovery
+            static uint32_t updateCount = 0;
+            if (++updateCount % 10 == 1) { // Log every 10th call (every 10 seconds) to avoid spam
+                ESP_LOGI(MAIN_TAG, "🔄 Main loop calling updateAdaptiveMesh() (#%u)", updateCount);
+            }
+            meshCoordinator.updateAdaptiveMesh();
+            lastAdaptiveMeshUpdate = now;
+        }
+        
         // Update and report network health every 60 seconds (reduced frequency)
         static uint32_t lastHealthUpdate = 0;
         if (now - lastHealthUpdate > 60000) {
@@ -221,10 +249,17 @@ extern "C" void app_main(void) {
                 .packets_dropped = stats.packets_dropped,
                 .send_failures = stats.send_failures
             };
-            networkHealth.updateMetrics(meshStats, active_neighbors, -65, // TODO: Get real RSSI average
-                                      meshCoordinator.isRootNode() ? (meshCoordinator.isBleConnected() ? 1 : 2) : 0);
+            // TODO: Implement RSSI collection in mesh coordinator
+            int8_t avg_rssi = -65;  // Placeholder RSSI value (good signal strength)
             
-            const NetworkHealth& health = networkHealth.getCurrentHealth();
+            networkHealthMonitor.updateMetrics(meshStats, active_neighbors, avg_rssi,
+                                              meshCoordinator.isRootNode() ? (meshCoordinator.isBleConnected() ? 1 : 2) : 0,
+                                              meshCoordinator.getReachableNodeCount());
+            
+            const NetworkHealth& health = networkHealthMonitor.getCurrentHealth();
+            
+            // Send network health via BLE characteristic for Flutter app
+            health_profile->sendHealthUpdate();
             
             // Single concise status line with network health
             ESP_LOGI(MAIN_TAG, "Node 0x%04X | %s | LED:%s | Health:%u%% (%u neighbors, %u%% success)", 
@@ -235,10 +270,9 @@ extern "C" void app_main(void) {
                      health.active_neighbors,
                      health.packet_success_rate);
             
-            // TODO: Send network health via BLE characteristic when mobile app supports it
-            // For now, show detailed health in logs for debugging
+            // Show detailed health in logs for debugging
             const char* health_level = "UNKNOWN";
-            switch (networkHealth.getHealthLevel()) {
+            switch (networkHealthMonitor.getHealthLevel()) {
                 case NETWORK_EXCELLENT: health_level = "EXCELLENT"; break;
                 case NETWORK_GOOD: health_level = "GOOD"; break; 
                 case NETWORK_POOR: health_level = "POOR"; break;
@@ -251,6 +285,21 @@ extern "C" void app_main(void) {
         }
         
         // Optional: Enable detailed mesh debugging (disabled in production)
+        // Debug mesh neighbor discovery every 30 seconds
+        static uint32_t lastNeighborDebug = 0;
+        if (meshCoordinator.isAdaptiveMeshEnabled() && (now - lastNeighborDebug > 30000)) { // Every 30 seconds
+            size_t neighborCount = meshCoordinator.getActiveNeighborCount();
+            ESP_LOGI(MAIN_TAG, "🔍 NEIGHBOR DEBUG - Active neighbors: %zu, Adaptive mesh enabled: %s", 
+                     neighborCount, meshCoordinator.isAdaptiveMeshEnabled() ? "YES" : "NO");
+            
+            // Print current network health data
+            NetworkHealth health = networkHealthMonitor.getCurrentHealth();
+            ESP_LOGI(MAIN_TAG, "📊 HEALTH DEBUG - Score: %d%%, Neighbors: %d, Success: %d%%, Role: %d",
+                     health.overall_score, health.active_neighbors, health.packet_success_rate, health.mesh_role);
+            
+            lastNeighborDebug = now;
+        }
+        
         #ifdef CONFIG_LOG_MAXIMUM_LEVEL_DEBUG
         static uint32_t lastDetailedStatus = 0;
         if (meshCoordinator.isAdaptiveMeshEnabled() && (now - lastDetailedStatus > 300000)) { // Every 5 minutes
