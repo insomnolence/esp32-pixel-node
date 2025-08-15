@@ -95,4 +95,28 @@ public:
     virtual int Advance(int step, bool timed = false) override;
 };
 
+class ParameterizedSequence : public StepSequence {
+public:
+    // Constructor for Warning/Exit patterns with 3 colors
+    ParameterizedSequence(uint32_t primaryColor, uint32_t secondaryColor, uint32_t tertiaryColor);
+    ~ParameterizedSequence();
+    
+private:
+    Step* dynamicSteps; // Dynamically allocated steps array
+    void createSteps(uint32_t primaryColor, uint32_t secondaryColor, uint32_t tertiaryColor);
+};
+
+class SingleRandomSequence : public StepSequence {
+public:
+    SingleRandomSequence();
+    ~SingleRandomSequence();
+    
+    void pickNewRandomPattern(); // Select a new random pattern
+    virtual int Advance(int step, bool timed = false) override;
+    
+private:
+    Step* dynamicSteps; // Dynamically allocated for 1 random pattern
+    void createRandomStep();
+};
+
 #endif // SEQUENCE_H_

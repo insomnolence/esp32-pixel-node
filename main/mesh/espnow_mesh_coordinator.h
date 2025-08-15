@@ -66,7 +66,8 @@ struct ESPNowMeshPacket {
     uint8_t source_mac[6];       // Original sender MAC
     uint32_t timestamp;          // Send timestamp for sync
     uint16_t data_len;           // Actual payload size
-    uint8_t data[ESPNOW_MESH_MAX_PAYLOAD_LEN - 20]; // Reserve space for header
+    uint32_t crc32;              // CRC32 checksum for packet integrity
+    uint8_t data[ESPNOW_MESH_MAX_PAYLOAD_LEN - 24]; // Reserve space for header + CRC32
 } __attribute__((packed));
 
 class BoundedPacketTracker {
@@ -132,9 +133,11 @@ public:
     
     // Advanced election system
     void startAdvancedElection();
+    void startForcedTakeover(); // Start election with priority boost for manual override
     void processElectionPacket(const ESPNowMeshPacket& packet);
     uint32_t calculateNodePriority() const;
     void checkElectionTimeout();
+    void endElection(); // Clean up election state and clear forced takeover flag
     
     // Adaptive mesh control (parallel implementation)
     esp_err_t enableAdaptiveMesh();
@@ -180,6 +183,13 @@ public:
         }
     };
 
+    // 🛡️ CRC32 Packet Integrity Protection
+    static uint32_t calculatePacketCRC32(const ESPNowMeshPacket* packet);
+    static bool validatePacketCRC32(const ESPNowMeshPacket* packet);
+    
+    // BLE Root Detection
+    bool hasActiveBleRoot() const;
+
 private:
     static const char* TAG;
     static ESPNowMeshCoordinator* instance;
@@ -199,6 +209,7 @@ private:
     uint32_t election_timer;
     uint32_t last_root_announcement;
     bool heard_from_root;
+    bool last_announcement_was_ble_root;
     
     // BLE connection timestamp tracking for priority comparison
     uint32_t ble_connection_uptime_ms;  // When BLE connected (our uptime)
@@ -208,6 +219,7 @@ private:
     ElectionState election_state;
     uint32_t election_start_time;
     uint32_t election_phase_timeout;
+    bool is_forced_takeover; // Flag for dual-button manual takeover priority boost
     static const size_t MAX_ELECTION_CANDIDATES = 16; // Bounded election candidates
     ElectionCandidate election_candidates[MAX_ELECTION_CANDIDATES];
     size_t election_candidate_count;

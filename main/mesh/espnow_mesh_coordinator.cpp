@@ -5,6 +5,7 @@
 #include "nvs_flash.h"
 #include "esp_bt.h"
 #include "esp_mac.h"
+#include "esp_rom_crc.h"
 #include <string.h>
 #include <ctime>
 
@@ -73,11 +74,13 @@ ESPNowMeshCoordinator::ESPNowMeshCoordinator()
     , election_timer(0)
     , last_root_announcement(0)
     , heard_from_root(false)
+    , last_announcement_was_ble_root(false)
     , ble_connection_uptime_ms(0)
     , has_ble_connection_timestamp(false)
     , election_state(ElectionState::ELECTION_IDLE)
     , election_start_time(0)
     , election_phase_timeout(0)
+    , is_forced_takeover(false)
     , election_candidate_count(0)
     , elected_root_node_id(0)
     , last_election_attempt(0)
@@ -133,6 +136,7 @@ esp_err_t ESPNowMeshCoordinator::init() {
     ESP_LOGI(TAG, "MAC Address: %02x:%02x:%02x:%02x:%02x:%02x", 
              local_mac[0], local_mac[1], local_mac[2], 
              local_mac[3], local_mac[4], local_mac[5]);
+    ESP_LOGI(TAG, "🛡️ CRC32 packet integrity protection enabled (ESP32 hardware-accelerated)");
     
     return ESP_OK;
 }
@@ -313,10 +317,15 @@ ESPNowMeshPacket ESPNowMeshCoordinator::createMeshPacket(MeshPacketType type, co
     packet.ttl = ttl;
     memcpy(packet.source_mac, local_mac, 6);
     packet.timestamp = esp_timer_get_time() / 1000; // Convert to ms
-    packet.data_len = std::min((size_t)(ESPNOW_MESH_MAX_PAYLOAD_LEN - 20), payload.getLength());
+    packet.data_len = std::min((size_t)(ESPNOW_MESH_MAX_PAYLOAD_LEN - 24), payload.getLength()); // Account for CRC32
     
     // Copy payload data
     memcpy(packet.data, payload.getData(), packet.data_len);
+    
+    // 🛡️ Calculate and set CRC32 for packet integrity (must be done after all other fields are set)
+    packet.crc32 = calculatePacketCRC32(&packet);
+    
+    ESP_LOGV(TAG, "🛡️ Created packet ID=0x%08lX with CRC32=0x%08lX", packet.packet_id, packet.crc32);
     
     // Mark packet as seen to prevent loop-back
     packet_tracker.isPacketSeen(packet.packet_id);
@@ -537,7 +546,7 @@ void ESPNowMeshCoordinator::onESPNowReceived(const esp_now_recv_info_t *recv_inf
 }
 
 void ESPNowMeshCoordinator::handleReceivedPacket(const uint8_t *mac_addr, const uint8_t *data, int len) {
-    const size_t min_packet_size = sizeof(ESPNowMeshPacket) - ESPNOW_MESH_MAX_PAYLOAD_LEN + 20;
+    const size_t min_packet_size = sizeof(ESPNowMeshPacket) - ESPNOW_MESH_MAX_PAYLOAD_LEN + 24; // Updated for CRC32
     if (len < min_packet_size) {
         ESP_LOGW(TAG, "Packet too small: %d < %zu", len, min_packet_size);
         network_stats.packets_dropped++;
@@ -546,10 +555,41 @@ void ESPNowMeshCoordinator::handleReceivedPacket(const uint8_t *mac_addr, const 
     
     ESPNowMeshPacket* mesh_packet = (ESPNowMeshPacket*)data;
     
-    // CRITICAL: Validate data_len before using it
+    // 🛡️ FIRST PRIORITY: Validate packet integrity with CRC32
+    if (!validatePacketCRC32(mesh_packet)) {
+        ESP_LOGW(TAG, "🛡️ Dropping packet with CRC32 validation failure from %02x:%02x:%02x:%02x:%02x:%02x", 
+                 mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
+        network_stats.packets_dropped++;
+        return;
+    }
+    
+    ESP_LOGV(TAG, "🛡️ CRC32 validation passed for packet ID=0x%08lX (CRC32=0x%08lX)", 
+             mesh_packet->packet_id, mesh_packet->crc32);
+    
+    // CRITICAL: Validate data_len before using it  
     const size_t max_data_len = len - min_packet_size;
     if (mesh_packet->data_len > max_data_len) {
-        ESP_LOGE(TAG, "Invalid data_len: %d > %zu", mesh_packet->data_len, max_data_len);
+        ESP_LOGE(TAG, "📡 PACKET SIZE ERROR: Invalid data_len=%d > max=%zu, total_len=%d", 
+                 mesh_packet->data_len, max_data_len, len);
+        ESP_LOGE(TAG, "📍 Source MAC: %02x:%02x:%02x:%02x:%02x:%02x", 
+                 mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
+        ESP_LOGE(TAG, "📦 Packet header: ID=0x%08lX, type=%d, TTL=%d, timestamp=%lu", 
+                 mesh_packet->packet_id, mesh_packet->packet_type, mesh_packet->ttl, mesh_packet->timestamp);
+        
+        // Check for corruption patterns
+        if (mesh_packet->data_len == 228) {
+            ESP_LOGW(TAG, "🔍 ANALYSIS: Recurring 228-byte claim detected - likely RF interference on data_len field");
+        } else if (mesh_packet->data_len > 250) {
+            ESP_LOGW(TAG, "🔍 ANALYSIS: Impossible size > ESP-NOW limit (250) - severe corruption detected");
+        } else {
+            ESP_LOGW(TAG, "🔍 ANALYSIS: Unusual size pattern - investigating new interference source");
+        }
+        
+        // Log first few bytes for corruption analysis
+        ESP_LOGE(TAG, "📋 Raw data (first 16 bytes): %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x",
+                 data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
+                 data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15]);
+        
         network_stats.packets_dropped++;
         return;
     }
@@ -635,6 +675,7 @@ void ESPNowMeshCoordinator::handleReceivedPacket(const uint8_t *mac_addr, const 
             // Process root announcement with BLE priority comparison
             if (mesh_packet->data_len >= 8) {
                 bool announcing_node_has_ble = (mesh_packet->data[6] == 1); // BLE status flag
+                last_announcement_was_ble_root = announcing_node_has_ble; // Track if last root was BLE-connected
                 uint16_t announcing_node_id = (mesh_packet->data[4] << 8) | mesh_packet->data[5];
                 
                 // Extract BLE connection age if available (12-byte format)
@@ -749,6 +790,9 @@ void ESPNowMeshCoordinator::forwardPacket(const ESPNowMeshPacket& packet) {
     // Create forwarded packet with decremented TTL
     ESPNowMeshPacket forward_packet = packet;
     forward_packet.ttl--;
+    
+    // 🛡️ Recalculate CRC32 since TTL changed
+    forward_packet.crc32 = calculatePacketCRC32(&forward_packet);
     
     ESP_LOGD(TAG, "Forwarding packet ID: 0x%08lX (TTL: %d -> %d)", 
              packet.packet_id, packet.ttl, forward_packet.ttl);
@@ -1026,11 +1070,44 @@ bool ESPNowMeshCoordinator::shouldAcceptBleConnection() const {
     return true;
 }
 
+bool ESPNowMeshCoordinator::hasActiveBleRoot() const {
+    // First check if we ourselves are a BLE-connected root
+    if (isRootNode() && ble_connected) {
+        return true;
+    }
+    
+    // Check if we recently received root announcements indicating BLE-connected roots
+    // This is based on the mesh topology and recent announcements
+    if (topology_manager) {
+        // If we're not the root, we should have received root announcements
+        if (!isRootNode()) {
+            // Check the last announcement timestamp - if recent, assume there's an active root
+            uint32_t current_time = esp_timer_get_time() / 1000;
+            uint32_t time_since_announcement = current_time - last_root_announcement;
+            
+            // If we received a root announcement within the last 10 seconds, assume there's an active root
+            static const uint32_t ROOT_ANNOUNCEMENT_TIMEOUT_MS = 10000;
+            if (time_since_announcement < ROOT_ANNOUNCEMENT_TIMEOUT_MS) {
+                // Check if the last announcement indicated BLE priority
+                return last_announcement_was_ble_root;
+            }
+        }
+    }
+    
+    return false;
+}
+
 uint32_t ESPNowMeshCoordinator::calculateNodePriority() const {
     uint32_t priority = 0;
     uint32_t current_uptime = esp_timer_get_time() / 1000;
     
     // Priority factors (higher score = higher priority):
+    
+    // 0. FORCED TAKEOVER OVERRIDE (dual-button manual override - 50000 points)
+    if (is_forced_takeover) {
+        priority += 50000;
+        ESP_LOGI(TAG, "🚀 FORCED TAKEOVER ACTIVE - Priority boost: +50000 points");
+    }
     
     // 1. BLE connection status (highest priority - 10000 points)
     if (ble_connected) {
@@ -1117,6 +1194,35 @@ void ESPNowMeshCoordinator::startAdvancedElection() {
     
     // Send discovery announcement to let other nodes know we're starting election
     sendElectionDiscoveryPacket();
+}
+
+void ESPNowMeshCoordinator::startForcedTakeover() {
+    ESP_LOGI(TAG, "🚀 STARTING FORCED TAKEOVER - Manual dual-button override");
+    
+    // Set forced takeover flag for massive priority boost
+    is_forced_takeover = true;
+    
+    // Start regular advanced election with the priority boost active
+    startAdvancedElection();
+    
+    // If election didn't start (e.g., already in progress), clear the flag
+    if (election_state == ElectionState::ELECTION_IDLE) {
+        is_forced_takeover = false;
+        ESP_LOGW(TAG, "Forced takeover failed to start - clearing flag");
+    }
+}
+
+void ESPNowMeshCoordinator::endElection() {
+    // Clear forced takeover flag if it was set
+    if (is_forced_takeover) {
+        is_forced_takeover = false;
+        ESP_LOGI(TAG, "🔄 Forced takeover flag cleared - election completed");
+    }
+    
+    // Reset election state to idle
+    election_state = ElectionState::ELECTION_IDLE;
+    
+    ESP_LOGI(TAG, "Election ended - returned to IDLE state");
 }
 
 void ESPNowMeshCoordinator::processElectionPacket(const ESPNowMeshPacket& packet) {
@@ -1211,19 +1317,19 @@ void ESPNowMeshCoordinator::advanceElectionPhase() {
                 sendElectionResultPacket();
             } else {
                 ESP_LOGW(TAG, "No election candidates found - election failed");
-                election_state = ElectionState::ELECTION_IDLE;
+                endElection();
             }
             break;
             
         case ElectionState::ELECTION_CONFIRMED:
             // Election complete
             ESP_LOGI(TAG, "Election COMPLETE - returning to idle state");
-            election_state = ElectionState::ELECTION_IDLE;
+            endElection();
             break;
             
         default:
             ESP_LOGW(TAG, "Unknown election state during timeout: %d", (int)election_state);
-            election_state = ElectionState::ELECTION_IDLE;
+            endElection();
             break;
     }
 }
@@ -1592,9 +1698,11 @@ void ESPNowMeshCoordinator::processElectionResult(const ESPNowMeshPacket& packet
             }
         }
         
-        // End our election participation
-        election_state = ElectionState::ELECTION_IDLE;
+        // Store election result before ending election
         elected_root_node_id = winner_node_id;
+        
+        // End our election participation
+        endElection();
         
         // Reset election timer to prevent immediate new election
         election_timer = esp_timer_get_time() / 1000 + 60000; // Wait 60 seconds
@@ -1784,8 +1892,8 @@ size_t ESPNowMeshCoordinator::getActiveNeighborCount() const {
 
 size_t ESPNowMeshCoordinator::getReachableNodeCount() const {
     if (topology_manager) {
-        // Include the local node in the total count
-        return topology_manager->getReachableNodeCount() + 1;
+        // The local node is already included in the topology manager's count
+        return topology_manager->getReachableNodeCount();
     }
     return 1; // At minimum, count the local node
 }
@@ -1933,4 +2041,42 @@ void ESPNowMeshCoordinator::processAdaptiveDataForward(const ESPNowMeshPacket& p
     // In the future, this would use the adaptive router to determine
     // the best forwarding strategy based on topology and routes
     ESP_LOGD(TAG, "Adaptive data forwarding not yet implemented");
+}
+
+// 🛡️ ===== CRC32 PACKET INTEGRITY PROTECTION =====
+
+uint32_t ESPNowMeshCoordinator::calculatePacketCRC32(const ESPNowMeshPacket* packet) {
+    // Calculate CRC32 over entire packet excluding the CRC32 field itself
+    // This ensures we can verify packet integrity upon reception
+    
+    uint32_t crc = ~0U; // Initialize with 0xFFFFFFFF
+    
+    // Calculate CRC32 for packet header up to (but not including) the CRC32 field
+    size_t header_size = offsetof(ESPNowMeshPacket, crc32);
+    crc = esp_rom_crc32_le(crc, (const uint8_t*)packet, header_size);
+    
+    // Calculate CRC32 for the actual data payload (only valid bytes)
+    if (packet->data_len > 0 && packet->data_len <= (ESPNOW_MESH_MAX_PAYLOAD_LEN - 24)) {
+        crc = esp_rom_crc32_le(crc, packet->data, packet->data_len);
+    }
+    
+    return ~crc; // Final XOR to complete CRC32 calculation
+}
+
+bool ESPNowMeshCoordinator::validatePacketCRC32(const ESPNowMeshPacket* packet) {
+    // Calculate expected CRC32 for this packet
+    uint32_t calculated_crc = calculatePacketCRC32(packet);
+    
+    // Compare with the CRC32 stored in the packet
+    bool is_valid = (calculated_crc == packet->crc32);
+    
+    // Log validation results for debugging (only on failure to avoid spam)
+    if (!is_valid) {
+        ESP_LOGW(TAG, "🛡️ CRC32 VALIDATION FAILED: calculated=0x%08lX, packet=0x%08lX", 
+                 calculated_crc, packet->crc32);
+        ESP_LOGW(TAG, "📦 Packet details: ID=0x%08lX, type=%d, data_len=%d", 
+                 packet->packet_id, packet->packet_type, packet->data_len);
+    }
+    
+    return is_valid;
 }

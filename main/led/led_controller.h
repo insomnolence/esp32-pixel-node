@@ -15,20 +15,26 @@
 // Default LED pin based on target platform
 #ifdef CONFIG_IDF_TARGET_ESP32C3
 #define DEFAULT_LED_PIN 7   // ESP32C3 board
+#define DEFAULT_LED_COUNT 60  // ESP32C3: Reduced count to prevent power-related resets
 #elif CONFIG_IDF_TARGET_ESP32
 #define DEFAULT_LED_PIN 12  // ESP32 board  
+#define DEFAULT_LED_COUNT 144 // ESP32: Full strip
 #else
 #define DEFAULT_LED_PIN 7   // Default fallback
+#define DEFAULT_LED_COUNT 144 // Default: Full strip
 #endif
-#define DEFAULT_LED_COUNT 144
 #define PHYSICAL_LED_STRIP_LENGTH 144  // Total LEDs on physical strip (for clearing extras)
 
 // Dual-core processing message types
 enum class LEDCommandType {
     UPDATE_PATTERN,
     SET_SEQUENCE,
+    BUTTON_FEEDBACK,  // Route button feedback through LED task to prevent RMT conflicts
     SHUTDOWN
 };
+
+// Include feedback types
+#include "../system/button_feedback_types.h"
 
 // Message structure for LED processing queue
 struct LEDCommand {
@@ -40,6 +46,10 @@ struct LEDCommand {
         struct {
             Sequence* sequence;
         } setSeq;
+        struct {
+            FeedbackType feedback_type;
+            uint32_t duration_ms;
+        } buttonFeedback;
     } data;
 };
 
@@ -59,6 +69,11 @@ public:
     void setIdleMode();
     void setAlertMode();
     void setRandomMode();
+    void setWarningMode();  // Warning pattern (yellow)
+    void setExitMode();     // Exit pattern (red)
+    void setRandomModeWithNewPattern(); // Random mode with fresh random pattern selection
+    
+    // Note: Visual feedback methods moved to ButtonFeedbackController for local-only feedback
     void advanceSequence();
     
     // Update loop (call from main loop)
@@ -68,6 +83,12 @@ public:
     bool isInitialized() const { return initialized; }
     const char* getCurrentSequenceType() const;
     
+    // Button feedback through LED task (prevents RMT timing conflicts on ESP32-C3)
+    esp_err_t showButtonFeedback(FeedbackType type, uint32_t duration_ms);
+    
+    // Direct LED access for local feedback (ButtonFeedbackController) - DEPRECATED: Use showButtonFeedback instead
+    LEDStrip* getLEDStrip() { return strip; }
+    
 private:
     LEDStrip* strip;
     Player* player;
@@ -75,8 +96,13 @@ private:
     // Pre-defined sequences
     IdleSequence* idleSequence;
     AlertSequence* alertSequence;
-    RandomSequence* randomSequence;
+    RandomSequence* randomSequence;  // Keep for compatibility
+    SingleRandomSequence* singleRandomSequence;  // Button 2: single pattern then idle
     PacketSequence* packetSequence;
+    
+    // Parameterized sequences  
+    ParameterizedSequence* warningSequence;
+    ParameterizedSequence* exitSequence;
     
     // Current packet for PacketSequence
     Packet currentPacket;
@@ -84,6 +110,10 @@ private:
     bool initialized;
     const uint8_t ledPin;      // Const - never changes after construction
     const uint16_t ledCount;   // Const - never changes after construction
+    
+    // Button 2 single random pattern tracking
+    bool singleRandomActive;
+    uint32_t singleRandomStartTime;
     
     // LED task processing members (both ESP32 and ESP32C3)
     QueueHandle_t ledCommandQueue;
@@ -104,6 +134,9 @@ private:
     static void ledProcessingTaskWrapper(void* parameter);
     void ledProcessingTask();
     bool sendLEDCommand(const LEDCommand& command, TickType_t timeout = portMAX_DELAY);
+    
+    // Button feedback handling in LED task context
+    void handleButtonFeedbackInLEDTask(FeedbackType type, uint32_t duration_ms);
 };
 
 #endif // LED_CONTROLLER_H_

@@ -1,4 +1,5 @@
-idf_component_register(SRCS 
+# Core source files (always compiled)
+set(COMPONENT_SRCS 
     "main.cpp"
     "bluetooth/ble_gatt_server.cpp" 
     "bluetooth/ble_gap_handler.cpp"
@@ -20,4 +21,20 @@ idf_component_register(SRCS
     "led/player.cpp"
     "led/sequence.cpp"
     "led/led_controller.cpp"
-    INCLUDE_DIRS "." "bluetooth" "mesh" "mesh/adaptive" "packet" "led" "system")
+    "utils/global_objects.cpp"
+    "utils/stack_monitor.cpp"
+)
+
+# Conditionally add button interface source files
+if(CONFIG_BUTTON_INTERFACE_ENABLED)
+    list(APPEND COMPONENT_SRCS 
+        "system/button_manager.cpp"
+        "system/button_logic.cpp"
+        "system/button_feedback.cpp"
+        "system/dual_button_detector.cpp"
+        "system/root_takeover_manager.cpp"
+    )
+endif()
+
+idf_component_register(SRCS ${COMPONENT_SRCS}
+    INCLUDE_DIRS "." "bluetooth" "mesh" "mesh/adaptive" "packet" "led" "system" "utils")

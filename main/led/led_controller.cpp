@@ -1,5 +1,6 @@
 #include "led_controller.h"
 #include "esp_log.h"
+#include "../system/button_feedback_types.h"
 #include <cstring>
 
 const char* LEDController::TAG = "LEDController";
@@ -10,10 +11,15 @@ LEDController::LEDController(uint8_t pin, uint16_t count)
     , idleSequence(nullptr)
     , alertSequence(nullptr)
     , randomSequence(nullptr)
+    , singleRandomSequence(nullptr)
     , packetSequence(nullptr)
+    , warningSequence(nullptr)
+    , exitSequence(nullptr)
     , initialized(false)
     , ledPin(pin)
     , ledCount(count)
+    , singleRandomActive(false)
+    , singleRandomStartTime(0)
     , ledCommandQueue(nullptr)
     , ledTaskHandle(nullptr)
     , ledTaskMode(false)
@@ -38,8 +44,14 @@ void LEDController::cleanup() {
     alertSequence = nullptr;
     delete randomSequence;
     randomSequence = nullptr;
+    delete singleRandomSequence;
+    singleRandomSequence = nullptr;
     delete packetSequence;
     packetSequence = nullptr;
+    delete warningSequence;
+    warningSequence = nullptr;
+    delete exitSequence;
+    exitSequence = nullptr;
     initialized = false;
 }
 
@@ -90,9 +102,34 @@ esp_err_t LEDController::begin() {
         return ESP_ERR_NO_MEM;
     }
     
+    singleRandomSequence = new(std::nothrow) SingleRandomSequence();
+    if (!singleRandomSequence) {
+        ESP_LOGE(TAG, "Failed to create single random sequence");
+        cleanup();
+        return ESP_ERR_NO_MEM;
+    }
+    
     packetSequence = new(std::nothrow) PacketSequence(&currentPacket);
     if (!packetSequence) {
         ESP_LOGE(TAG, "Failed to create packet sequence");
+        cleanup();
+        return ESP_ERR_NO_MEM;
+    }
+    
+    // Create Warning sequence (Yellow colors)
+    // Primary: YELLOW (#FFFF00), Secondary: Light Yellow (#FFFC40)
+    warningSequence = new(std::nothrow) ParameterizedSequence(YELLOW, 0xFFFC40, YELLOW);
+    if (!warningSequence) {
+        ESP_LOGE(TAG, "Failed to create warning sequence");
+        cleanup();
+        return ESP_ERR_NO_MEM;
+    }
+    
+    // Create Exit sequence (Red colors)  
+    // Primary: RED (#FF0000), Secondary: Light Red (#FF4040)
+    exitSequence = new(std::nothrow) ParameterizedSequence(RED, 0xFF4040, RED);
+    if (!exitSequence) {
+        ESP_LOGE(TAG, "Failed to create exit sequence");
         cleanup();
         return ESP_ERR_NO_MEM;
     }
@@ -153,6 +190,9 @@ esp_err_t LEDController::processPacket(const GenericPacket& packet) {
     
     // Switch to packet sequence to display this pattern
     setSequence(packetSequence);
+    
+    // Reset single random tracking - BLE patterns take priority over button patterns
+    singleRandomActive = false;
     
     ESP_LOGI(TAG, "✅ LED packet processed successfully");
     return ESP_OK;
@@ -227,6 +267,8 @@ void LEDController::setIdleMode() {
     
     ESP_LOGI(TAG, "Switching to idle mode");
     setSequence(idleSequence);
+    // Reset single random tracking
+    singleRandomActive = false;
 }
 
 void LEDController::setAlertMode() {
@@ -242,6 +284,42 @@ void LEDController::setRandomMode() {
     ESP_LOGI(TAG, "Switching to random mode");
     setSequence(randomSequence);
 }
+
+void LEDController::setWarningMode() {
+    if (!initialized) return;
+    
+    ESP_LOGI(TAG, "Switching to warning mode (yellow pattern)");
+    setSequence(warningSequence);
+    // Reset single random tracking
+    singleRandomActive = false;
+}
+
+void LEDController::setExitMode() {
+    if (!initialized) return;
+    
+    ESP_LOGI(TAG, "Switching to exit mode (red pattern)");
+    setSequence(exitSequence);
+    // Reset single random tracking
+    singleRandomActive = false;
+}
+
+void LEDController::setRandomModeWithNewPattern() {
+    if (!initialized) return;
+    
+    ESP_LOGI(TAG, "Switching to single random pattern mode with new pattern selection");
+    // Pick a new random pattern
+    singleRandomSequence->pickNewRandomPattern();
+    // Switch to the single random sequence (will run for 30 seconds then we'll switch back to idle)
+    setSequence(singleRandomSequence);
+    
+    // Track that we're in single random mode and when it started
+    singleRandomActive = true;
+    singleRandomStartTime = esp_timer_get_time() / 1000; // Current time in ms
+    ESP_LOGI(TAG, "Single random pattern started - will return to idle after 30 seconds");
+}
+
+// Note: Visual feedback methods moved to ButtonFeedbackController for local-only feedback
+// This avoids creating temporary packet sequences and broadcasting over mesh
 
 void LEDController::setSequence(Sequence* sequence) {
     if (!initialized || !sequence) return;
@@ -286,6 +364,15 @@ void LEDController::update() {
     // Main loop mode: perform LED updates on current core
     time_t now = esp_timer_get_time() / 1000; // Convert to ms
     
+    // Check if single random pattern should return to idle (30 seconds elapsed)
+    if (singleRandomActive) {
+        if (now - singleRandomStartTime >= 30000) { // 30 seconds = 30000ms
+            ESP_LOGI(TAG, "Single random pattern completed - returning to idle mode");
+            setIdleMode();
+            singleRandomActive = false;
+        }
+    }
+    
     // Update pattern if needed
     player->UpdatePattern(now, strip);
     
@@ -305,6 +392,12 @@ const char* LEDController::getCurrentSequenceType() const {
         return "Alert";
     } else if (current == randomSequence) {
         return "Random";
+    } else if (current == singleRandomSequence) {
+        return "SingleRandom";
+    } else if (current == warningSequence) {
+        return "Warning";
+    } else if (current == exitSequence) {
+        return "Exit";
     } else if (current == packetSequence) {
         return "Packet/Mobile";
     } else {
@@ -427,12 +520,31 @@ void LEDController::ledProcessingTask() {
                 case LEDCommandType::UPDATE_PATTERN:
                     // This is handled in the main update loop below
                     break;
+                    
+                case LEDCommandType::BUTTON_FEEDBACK:
+                    // Handle button feedback within LED task to prevent RMT conflicts
+                    handleButtonFeedbackInLEDTask(command.data.buttonFeedback.feedback_type, 
+                                                  command.data.buttonFeedback.duration_ms);
+                    break;
             }
         }
         
         // Perform regular LED updates with precise timing
         if (initialized && player && strip) {
             led_time_t now = esp_timer_get_time() / 1000; // Convert to ms
+            
+            // Check if single random pattern should return to idle (30 seconds elapsed)
+            if (singleRandomActive) {
+                if (now - singleRandomStartTime >= 30000) { // 30 seconds = 30000ms
+                    ESP_LOGI(TAG, "Single random pattern completed - returning to idle mode");
+                    // Switch directly to idle sequence (we're in LED task, safe to call)
+                    if (player && idleSequence) {
+                        player->SetSequence(idleSequence);
+                        singleRandomActive = false;
+                        ESP_LOGI(TAG, "Switched to idle mode from LED task");
+                    }
+                }
+            }
             
             // Update pattern if needed
             player->UpdatePattern(now, strip);
@@ -452,5 +564,140 @@ bool LEDController::sendLEDCommand(const LEDCommand& command, TickType_t timeout
     }
     
     return xQueueSend(ledCommandQueue, &command, timeout) == pdTRUE;
+}
+
+esp_err_t LEDController::showButtonFeedback(FeedbackType type, uint32_t duration_ms) {
+    if (!initialized) {
+        ESP_LOGW(TAG, "LED Controller not initialized - cannot show button feedback");
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    if (!ledTaskMode) {
+        ESP_LOGW(TAG, "LED task mode not active - button feedback requires LED task");
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    // Send button feedback command to LED task
+    LEDCommand cmd = {
+        .type = LEDCommandType::BUTTON_FEEDBACK,
+        .data = {.buttonFeedback = {.feedback_type = type, .duration_ms = duration_ms}}
+    };
+    
+    if (!sendLEDCommand(cmd, pdMS_TO_TICKS(10))) {
+        ESP_LOGW(TAG, "Failed to send button feedback command to LED task");
+        return ESP_ERR_TIMEOUT;
+    }
+    
+    ESP_LOGD(TAG, "Button feedback command sent to LED task (type=%d, duration=%ums)", 
+             (int)type, duration_ms);
+    return ESP_OK;
+}
+
+void LEDController::handleButtonFeedbackInLEDTask(FeedbackType type, uint32_t duration_ms) {
+    if (!strip) {
+        ESP_LOGW(TAG, "LED strip not available for button feedback");
+        return;
+    }
+    
+    uint16_t led_count = strip->numPixels();
+    if (led_count == 0) {
+        ESP_LOGW(TAG, "No LEDs configured for button feedback");
+        return;
+    }
+    
+    ESP_LOGD(TAG, "Handling button feedback in LED task: type=%d, duration=%ums", 
+             (int)type, duration_ms);
+    
+    // Apply immediate feedback pattern based on type
+    switch (type) {
+        case BUTTON_PRESS_FEEDBACK: {
+            // Quick blue flash for button press
+            for (uint16_t i = 0; i < led_count; i++) {
+                strip->setPixelColor(i, 0x0000FF); // BLUE
+            }
+            strip->show();
+            // Brief flash, then clear
+            vTaskDelay(pdMS_TO_TICKS(100));
+            strip->clear();
+            strip->show();
+            break;
+        }
+        
+        case DUAL_PRESS_DETECTED: {
+            // Magenta pattern for dual press detection
+            strip->clear();
+            for (uint16_t i = 0; i < led_count && i < 10; i++) {
+                strip->setPixelColor(i, 0xFF00FF); // MAGENTA
+            }
+            strip->show();
+            vTaskDelay(pdMS_TO_TICKS(duration_ms));
+            strip->clear();
+            strip->show();
+            break;
+        }
+        
+        case TAKEOVER_IN_PROGRESS: {
+            // Animated purple marching pattern
+            uint32_t end_time = esp_timer_get_time() / 1000 + duration_ms;
+            while (esp_timer_get_time() / 1000 < end_time) {
+                uint32_t elapsed = (esp_timer_get_time() / 1000) - (end_time - duration_ms);
+                uint32_t phase = (elapsed / 150) % 4;
+                
+                strip->clear();
+                for (uint16_t i = phase; i < led_count; i += 4) {
+                    strip->setPixelColor(i, 0xFF00FF); // MAGENTA
+                }
+                strip->show();
+                vTaskDelay(pdMS_TO_TICKS(150));
+            }
+            strip->clear();
+            strip->show();
+            break;
+        }
+        
+        case TAKEOVER_SUCCESS: {
+            // Green success pattern
+            for (uint16_t i = 0; i < led_count; i++) {
+                strip->setPixelColor(i, 0x00FF00); // GREEN
+            }
+            strip->show();
+            vTaskDelay(pdMS_TO_TICKS(duration_ms));
+            strip->clear();
+            strip->show();
+            break;
+        }
+        
+        case TAKEOVER_FAILED: {
+            // Red strobe for failure
+            uint32_t end_time = esp_timer_get_time() / 1000 + duration_ms;
+            while (esp_timer_get_time() / 1000 < end_time) {
+                // Red on
+                for (uint16_t i = 0; i < led_count; i++) {
+                    strip->setPixelColor(i, 0xFF0000); // RED
+                }
+                strip->show();
+                vTaskDelay(pdMS_TO_TICKS(100));
+                
+                // Off
+                strip->clear();
+                strip->show();
+                vTaskDelay(pdMS_TO_TICKS(100));
+            }
+            break;
+        }
+        
+        case BUTTON_BLOCKED_BLE:
+        case BUTTON_BLOCKED_CLIENT: {
+            // Silent blocking - no visual feedback (deprecated, handled in ButtonLogic)
+            ESP_LOGD(TAG, "Button blocked feedback type %d (silent mode)", (int)type);
+            break;
+        }
+        
+        default:
+            ESP_LOGW(TAG, "Unknown button feedback type: %d", (int)type);
+            break;
+    }
+    
+    ESP_LOGD(TAG, "Button feedback completed in LED task");
 }
 
