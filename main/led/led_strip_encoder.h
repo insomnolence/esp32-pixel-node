@@ -1,5 +1,4 @@
-#ifndef LED_STRIP_ENCODER_H_
-#define LED_STRIP_ENCODER_H_
+#pragma once
 
 #include "esp_err.h"
 #include "driver/rmt_encoder.h"
@@ -30,5 +29,3 @@ esp_err_t rmt_new_led_strip_encoder(const led_strip_encoder_config_t *config, rm
 #ifdef __cplusplus
 }
 #endif
-
-#endif // LED_STRIP_ENCODER_H_

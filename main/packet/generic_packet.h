@@ -1,5 +1,4 @@
-#ifndef GENERIC_PACKET_H_
-#define GENERIC_PACKET_H_
+#pragma once
 
 #include <stdint.h>
 #include <stddef.h>
@@ -69,5 +68,3 @@ public:
     // Optional: Validate packet before processing
     virtual bool canProcessPacket(const GenericPacket& packet) const { return true; }
 };
-
-#endif // GENERIC_PACKET_H_

@@ -1,5 +1,4 @@
-#ifndef PLAYER_H_
-#define PLAYER_H_
+#pragma once
 
 #include <stdint.h>
 #include <memory>
@@ -65,5 +64,3 @@ protected:
 };
 
 const led_time_t FRAME_MS = 16;  // 16ms per frame (60 FPS) - smooth for LEDs
-
-#endif // PLAYER_H_

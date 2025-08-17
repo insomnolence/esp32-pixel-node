@@ -1,5 +1,4 @@
-#ifndef NETWORK_HEALTH_H_
-#define NETWORK_HEALTH_H_
+#pragma once
 
 #include <stdint.h>
 #include "esp_err.h"
@@ -62,5 +61,3 @@ private:
     uint8_t calculateSuccessRate() const;
     static const char* TAG;
 };
-
-#endif // NETWORK_HEALTH_H_

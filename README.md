@@ -148,6 +148,13 @@ void check_platform() {
 
 ## 🏗️ **Building and Flashing**
 
+### **Prerequisites**
+- **ESP-IDF v6.0+** (tested with v6.0-dev-1489-g4e036983a7)
+- **Python 3.8+** (Python 3.13+ recommended for ESP-IDF v6.0)
+- **CMake 3.16+** (required for build system)
+
+⚠️ **Not backwards compatible with ESP-IDF v5.x** due to ESP-NOW API changes.
+
 ### **Complete Build Process**
 ```bash
 # 1. Set up ESP-IDF environment

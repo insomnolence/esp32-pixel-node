@@ -1,5 +1,4 @@
-#ifndef ESPNOW_MESH_COORDINATOR_H_
-#define ESPNOW_MESH_COORDINATOR_H_
+#pragma once
 
 #include "esp_now.h"
 #include "esp_wifi.h"
@@ -237,7 +236,7 @@ private:
     bool adaptive_mesh_enabled;
     
     // ESP-NOW callbacks
-    static void onESPNowSent(const uint8_t *mac_addr, esp_now_send_status_t status);
+    static void onESPNowSent(const wifi_tx_info_t *tx_info, esp_now_send_status_t status);
     static void onESPNowReceived(const esp_now_recv_info_t *recv_info, const uint8_t *data, int len);
     
     // Internal packet handling
@@ -285,5 +284,3 @@ private:
     void processAdaptiveRouting(const ESPNowMeshPacket& packet);
     void processAdaptiveDataForward(const ESPNowMeshPacket& packet);
 };
-
-#endif // ESPNOW_MESH_COORDINATOR_H_

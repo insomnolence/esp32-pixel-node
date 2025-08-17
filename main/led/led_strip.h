@@ -1,5 +1,4 @@
-#ifndef LED_STRIP_H_
-#define LED_STRIP_H_
+#pragma once
 
 #include "esp_err.h"
 #include "driver/rmt_tx.h"
@@ -67,5 +66,3 @@ const uint32_t WHITE    = 0xFFFFFF;
 inline uint32_t fade(uint32_t low, uint32_t high, uint8_t value) {
     return (high - low) * value / 255 + low;
 }
-
-#endif // LED_STRIP_H_

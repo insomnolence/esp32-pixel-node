@@ -1,5 +1,4 @@
-#ifndef PACKET_H_
-#define PACKET_H_
+#pragma once
 
 #include <stdint.h>
 
@@ -14,5 +13,3 @@ typedef struct {
     uint8_t level[3];
 } Packet;
 #pragma pack(pop)
-
-#endif // PACKET_H_

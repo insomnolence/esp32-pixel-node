@@ -1,5 +1,4 @@
-#ifndef LED_CONTROLLER_H_
-#define LED_CONTROLLER_H_
+#pragma once
 
 #include "led_strip.h"
 #include "player.h"
@@ -138,5 +137,3 @@ private:
     // Button feedback handling in LED task context
     void handleButtonFeedbackInLEDTask(FeedbackType type, uint32_t duration_ms);
 };
-
-#endif // LED_CONTROLLER_H_

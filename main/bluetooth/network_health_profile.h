@@ -1,5 +1,4 @@
-#ifndef NETWORK_HEALTH_PROFILE_H_
-#define NETWORK_HEALTH_PROFILE_H_
+#pragma once
 
 #include "gatt_profile.h"
 #include "../system/network_health.h"
@@ -44,5 +43,3 @@ private:
     
     static const char* TAG;
 };
-
-#endif // NETWORK_HEALTH_PROFILE_H_

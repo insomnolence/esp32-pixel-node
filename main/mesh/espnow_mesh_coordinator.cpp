@@ -524,7 +524,7 @@ void ESPNowMeshCoordinator::randomBackoff() {
     }
 }
 
-void ESPNowMeshCoordinator::onESPNowSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
+void ESPNowMeshCoordinator::onESPNowSent(const wifi_tx_info_t *tx_info, esp_now_send_status_t status) {
     // Thread-safe access to singleton instance from interrupt context
     if (instance_mutex != nullptr && xSemaphoreTake(instance_mutex, 0) == pdTRUE) {
         if (instance) {

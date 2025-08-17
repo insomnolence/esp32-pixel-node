@@ -1,5 +1,4 @@
-#ifndef SEQUENCE_H_
-#define SEQUENCE_H_
+#pragma once
 
 #include "../packet/packet.h"
 #include "pattern.h"
@@ -118,5 +117,3 @@ private:
     Step* dynamicSteps; // Dynamically allocated for 1 random pattern
     void createRandomStep();
 };
-
-#endif // SEQUENCE_H_

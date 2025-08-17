@@ -1,5 +1,4 @@
-#ifndef ROUTER_H_
-#define ROUTER_H_
+#pragma once
 
 #include "neighbor_manager.h"
 #include "topology_manager.h"
@@ -233,5 +232,3 @@ private:
     void logRouteDiscovery(const RouteInfo& route, bool is_new) const;
     void logRouteSelection(uint16_t destination, uint16_t next_hop, RouteQuality quality) const;
 };
-
-#endif // ROUTER_H_

@@ -1,5 +1,4 @@
-#ifndef GRADIENT_H_
-#define GRADIENT_H_
+#pragma once
 
 #include "led_strip.h"
 #include <stdint.h>
@@ -32,5 +31,3 @@ private:
     Step m_steps[10];
     uint8_t m_stepCount;
 };
-
-#endif // GRADIENT_H_

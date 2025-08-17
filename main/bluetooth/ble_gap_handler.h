@@ -1,5 +1,4 @@
-#ifndef BLE_GAP_HANDLER_H_
-#define BLE_GAP_HANDLER_H_
+#pragma once
 
 #include "esp_err.h"
 #include "esp_gap_ble_api.h"
@@ -15,5 +14,3 @@ public:
 private:
     static const char* TAG;
 };
-
-#endif // BLE_GAP_HANDLER_H_

@@ -1,5 +1,4 @@
-#ifndef BLE_GATT_SERVER_H_
-#define BLE_GATT_SERVER_H_
+#pragma once
 
 #include "esp_err.h"
 #include "esp_bt_defs.h"
@@ -40,5 +39,3 @@ private:
     static uint32_t callback_counter; // Debug counter for callback invocations
     std::function<void()> advertisingCallback;
 };
-
-#endif // BLE_GATT_SERVER_H_

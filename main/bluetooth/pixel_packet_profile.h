@@ -1,5 +1,4 @@
-#ifndef PIXEL_PACKET_PROFILE_H_
-#define PIXEL_PACKET_PROFILE_H_
+#pragma once
 
 #include "gatt_profile.h"
 #include "../packet/generic_packet.h"
@@ -36,5 +35,3 @@ private:
     esp_gatt_if_t current_gatts_if;
     bool is_connected;
 };
-
-#endif // PIXEL_PACKET_PROFILE_H_

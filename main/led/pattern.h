@@ -1,5 +1,4 @@
-#ifndef PATTERN_H_
-#define PATTERN_H_
+#pragma once
 
 #include <stdint.h>
 
@@ -211,5 +210,3 @@ enum PatternID {
     PATTERN_STROBE = 9,
     PATTERN_CANDY_CANE = 10
 };
-
-#endif // PATTERN_H_

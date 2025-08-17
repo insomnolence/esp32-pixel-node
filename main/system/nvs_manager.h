@@ -1,5 +1,4 @@
-#ifndef NVS_MANAGER_H_
-#define NVS_MANAGER_H_
+#pragma once
 
 #include "esp_err.h"
 
@@ -15,5 +14,3 @@ private:
 };
 
 extern NvsManager nvsManager;
-
-#endif // NVS_MANAGER_H_

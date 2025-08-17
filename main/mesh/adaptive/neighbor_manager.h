@@ -1,5 +1,4 @@
-#ifndef NEIGHBOR_MANAGER_H_
-#define NEIGHBOR_MANAGER_H_
+#pragma once
 
 #include "esp_now.h"
 #include "esp_wifi.h"
@@ -154,5 +153,3 @@ private:
     // Debug methods
     void logNeighborUpdate(const NeighborInfo& neighbor, bool is_new) const;
 };
-
-#endif // NEIGHBOR_MANAGER_H_

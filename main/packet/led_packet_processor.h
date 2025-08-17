@@ -1,5 +1,4 @@
-#ifndef LED_PACKET_PROCESSOR_H_
-#define LED_PACKET_PROCESSOR_H_
+#pragma once
 
 #include "generic_packet.h"
 #include "packet.h" // Current packet format
@@ -38,5 +37,3 @@ private:
     
     PacketFormat detectPacketFormat(const GenericPacket& packet) const;
 };
-
-#endif // LED_PACKET_PROCESSOR_H_

@@ -1,5 +1,4 @@
-#ifndef TOPOLOGY_MANAGER_H_
-#define TOPOLOGY_MANAGER_H_
+#pragma once
 
 #include "neighbor_manager.h"
 #include "esp_err.h"
@@ -150,5 +149,3 @@ private:
     void logRoleChange(uint16_t node_id, AdaptiveNodeRole old_role, AdaptiveNodeRole new_role) const;
     void logTopologyUpdate(const TopologyNode& node, bool is_new) const;
 };
-
-#endif // TOPOLOGY_MANAGER_H_

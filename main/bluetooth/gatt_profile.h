@@ -1,5 +1,4 @@
-#ifndef GATT_PROFILE_H_
-#define GATT_PROFILE_H_
+#pragma once
 
 #include "esp_err.h"
 #include "esp_gatts_api.h"
@@ -65,5 +64,3 @@ private:
     static uint16_t nextAppId;
 
 };
-
-#endif // GATT_PROFILE_H_
