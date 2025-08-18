@@ -1,4 +1,4 @@
-> **Note:** This is a personal project that is ongoing.
+> Note: This is a personal project that is ongoing.
 >
 > *And yes, I did use AI as the tool that it is for some parts. Cast no stones*
 
@@ -8,18 +8,18 @@
 
 This project implements a sophisticated LED mesh network with autonomous root selection, BLE connectivity, and real-time LED pattern synchronization. This guide explains how to configure the system for your specific hardware and requirements.
 
-## 🎯 **Quick Start**
+## Quick Start
 
-### 1. **Choose Your ESP32 Platform**
+### 1. Choose Your ESP32 Platform
 The system automatically detects and configures for different ESP32 variants:
 
 | Platform | CPU Cores | Recommended LED Pin | Default LED Count | Memory |
 |----------|-----------|-------------------|------------------|---------|
-| **ESP32** | 2 (dual-core) | Pin 12 | 144 LEDs | 520KB SRAM |
-| **ESP32-C3** | 1 (single-core) | Pin 7 | 60 LEDs | 400KB SRAM |  
-| **ESP32-S3** | 2 (dual-core) | Pin 7 | 144 LEDs | 512KB SRAM |
+| ESP32 | 2 (dual-core) | Pin 12 | 144 LEDs | 520KB SRAM |
+| ESP32-C3 | 1 (single-core) | Pin 7 | 60 LEDs | 400KB SRAM |  
+| ESP32-S3 | 2 (dual-core) | Pin 7 | 144 LEDs | 512KB SRAM |
 
-### 2. **Set Your Target Platform**
+### 2. Set Your Target Platform
 ```bash
 # Set your ESP32 variant
 idf.py set-target esp32c3    # For ESP32-C3
@@ -27,43 +27,58 @@ idf.py set-target esp32      # For ESP32
 idf.py set-target esp32s3    # For ESP32-S3
 ```
 
-### 3. **Configure Your Hardware**
+### 3. Configure Your Hardware
 ```bash
 # Open configuration menu
 idf.py menuconfig
 ```
-Navigate to: **"ESP32 LED Mesh Configuration"**
+Navigate to: "ESP32 LED Mesh Configuration"
 
-## 🔧 **Hardware Configuration**
+## Hardware Configuration
 
-### **LED Strip Configuration**
+### LED Strip Configuration
 
-#### **Configure LED Pin**
+#### Configure LED Pin
 1. Go to `menuconfig` → "ESP32 LED Mesh Configuration" → "LED Configuration"
 2. Set "LED Strip GPIO Pin" to your wiring:
 
-**Safe GPIO Pins by Platform:**
-- **ESP32**: 0, 2, 4, 5, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33
-- **ESP32-C3**: 0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 18, 19, 20, 21  
-- **ESP32-S3**: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21
+Safe GPIO Pins by Platform:
+- ESP32: 0, 2, 4, 5, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33
+- ESP32-C3: 0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 18, 19, 20, 21  
+- ESP32-S3: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21
 
-⚠️ **Avoid strapping pins:** ESP32C3 pins 2,8,9 / ESP32 pins 0,2,5,12,15
+WARNING: Avoid strapping pins: ESP32C3 pins 2,8,9 / ESP32 pins 0,2,5,12,15
 
-#### **Configure LED Count**
+#### Configure LED Count
 Set "Number of LEDs" based on your strip and power supply:
 
-**Power Considerations:**
-- **USB Power (5V, 500mA)**: Max ~25 LEDs at full brightness
-- **USB Power (5V, 1A)**: Max ~50 LEDs at full brightness  
-- **External 5V Power**: Scale according to supply (60mA per LED at full white)
+Power Considerations:
+- USB Power (5V, 500mA): Max ~25 LEDs at full brightness
+- USB Power (5V, 1A): Max ~50 LEDs at full brightness  
+- External 5V Power: Scale according to supply (60mA per LED at full white)
 
-**Memory Considerations:**
-- **ESP32-C3**: Recommended max 60 LEDs (shown in code)
-- **ESP32/ESP32-S3**: Can handle 144+ LEDs
+NOTE: ESP32-C3 Brightness Limitation (Ongoing Work)
 
-### **Custom Hardware Examples**
+The ESP32-C3 implementation currently limits maximum brightness to 110 (out of 255) to prevent system resets caused by power limitations. This limitation is applied automatically in firmware and affects all brightness sources (mobile app, patterns, button feedback).
 
-#### **Example 1: ESP32-C3 with 30 LEDs on Pin 3**
+Technical Details:
+- Boost Converter: TPS61322A with ~2.9A switch current limit
+- Maximum Output Current: ~1.6A at low battery voltage (3.2V)
+- LED Current Calculation: 1600mA ÷ 60 LEDs = ~26.6mA per LED
+- Safe Brightness: (26.6mA ÷ 60mA) × 255 = 113 → 110 with safety margin
+- Power Budget: Designed for 60 LEDs × 26.6mA = 1596mA total
+
+Current Status: We are investigating optimal LED specifications and power requirements to determine if this is the intended operational range or if adjustments to the LED count/configuration are needed. This brightness limit ensures stable operation across the entire battery discharge cycle (4.2V to 3.2V).
+
+Impact: ESP32 platforms maintain full 255 brightness range. Only ESP32-C3 is affected by this limitation.
+
+Memory Considerations:
+- ESP32-C3: Recommended max 60 LEDs (shown in code)
+- ESP32/ESP32-S3: Can handle 144+ LEDs
+
+### Custom Hardware Examples
+
+#### Example 1: ESP32-C3 with 30 LEDs on Pin 3
 ```bash
 idf.py menuconfig
 # LED Configuration → LED Strip GPIO Pin → 3
@@ -71,7 +86,7 @@ idf.py menuconfig
 # LED Configuration → Physical LED Strip Length → 30
 ```
 
-#### **Example 2: ESP32 with 200 LEDs on Pin 16**  
+#### Example 2: ESP32 with 200 LEDs on Pin 16  
 ```bash
 idf.py menuconfig
 # LED Configuration → LED Strip GPIO Pin → 16
@@ -79,9 +94,9 @@ idf.py menuconfig
 # LED Configuration → Physical LED Strip Length → 200
 ```
 
-## 📶 **Network Configuration**
+## Network Configuration
 
-### **Mesh Network Settings**
+### Mesh Network Settings
 Configure ESP-NOW mesh parameters:
 
 ```bash
@@ -90,12 +105,12 @@ Configure ESP-NOW mesh parameters:
 
 | Setting | Recommended | Description |
 |---------|-------------|-------------|
-| **ESP-NOW Channel** | 6 | WiFi channel (1-14, avoid your WiFi) |
-| **Default Packet TTL** | 4 | Max hops (1-10) |
-| **Maximum Payload Length** | 200 | ESP-NOW limit is 250 bytes |
-| **Election Timeout** | 30000ms | Time for root election |
+| ESP-NOW Channel | 6 | WiFi channel (1-14, avoid your WiFi) |
+| Default Packet TTL | 4 | Max hops (1-10) |
+| Maximum Payload Length | 200 | ESP-NOW limit is 250 bytes |
+| Election Timeout | 30000ms | Time for root election |
 
-### **Bluetooth Configuration**
+### Bluetooth Configuration
 Customize BLE advertising and connection:
 
 ```bash
@@ -104,13 +119,13 @@ Customize BLE advertising and connection:
 
 | Setting | Default | Your Custom Value |
 |---------|---------|-------------------|
-| **BLE Device Name** | "ESP_LED_NODE" | "MyLEDController" |
-| **BLE Service UUID** | Standard UUID | Your custom UUID |
-| **Maximum BLE Packet Size** | 244 | 20-512 bytes |
+| BLE Device Name | "ESP_LED_NODE" | "MyLEDController" |
+| BLE Service UUID | Standard UUID | Your custom UUID |
+| Maximum BLE Packet Size | 244 | 20-512 bytes |
 
-## ⚙️ **Runtime Configuration**
+## Runtime Configuration
 
-### **Programmatic Configuration**
+### Programmatic Configuration
 Change settings in your code:
 
 ```cpp
@@ -134,7 +149,7 @@ void setup_my_configuration() {
 }
 ```
 
-### **Check Your Platform**
+### Check Your Platform
 ```cpp
 void check_platform() {
     SystemConfig& config = SystemConfig::getInstance();
@@ -146,16 +161,16 @@ void check_platform() {
 }
 ```
 
-## 🏗️ **Building and Flashing**
+## Building and Flashing
 
-### **Prerequisites**
-- **ESP-IDF v6.0+** (tested with v6.0-dev-1489-g4e036983a7)
-- **Python 3.8+** (Python 3.13+ recommended for ESP-IDF v6.0)
-- **CMake 3.16+** (required for build system)
+### Prerequisites
+- ESP-IDF v6.0+ (tested with v6.0-dev-1489-g4e036983a7)
+- Python 3.8+ (Python 3.13+ recommended for ESP-IDF v6.0)
+- CMake 3.16+ (required for build system)
 
-⚠️ **Not backwards compatible with ESP-IDF v5.x** due to ESP-NOW API changes.
+WARNING: Not backwards compatible with ESP-IDF v5.x due to ESP-NOW API changes.
 
-### **Complete Build Process**
+### Complete Build Process
 ```bash
 # 1. Set up ESP-IDF environment
 source ~/esp/esp-idf/export.sh
@@ -176,7 +191,7 @@ idf.py flash
 idf.py monitor
 ```
 
-### **Configuration Verification**
+### Configuration Verification
 After flashing, look for this output:
 ```
 I (1234) SystemConfig: Platform: ESP32-C3 (dual-core: no)
@@ -185,9 +200,9 @@ I (1236) SystemConfig: Mesh: channel=6, ttl=4, payload_len=200, cleanup_interval
 I (1237) SystemConfig: BLE: device='ESP_LED_NODE', packet_size=244
 ```
 
-## 🔌 **Hardware Wiring Guide**
+## Hardware Wiring Guide
 
-### **Basic LED Strip Connection**
+### Basic LED Strip Connection
 ```
 ESP32/ESP32C3        WS2812B LED Strip
     GND      ────────      GND
@@ -196,85 +211,85 @@ ESP32/ESP32C3        WS2812B LED Strip
    GPIO_X    ────────      DIN (Data Input)
 ```
 
-### **Multiple ESP32 Mesh Network**
+### Multiple ESP32 Mesh Network
 Each ESP32 needs:
 - LED strip connected to configured GPIO pin
 - Power supply appropriate for LED count
 - Same mesh channel configuration
 
-## 📱 **Mobile App Integration**
+## Mobile App Integration
 
-### **BLE Connection**
+### BLE Connection
 Your mobile app should connect to:
-- **Service UUID**: Configured in BLE settings (default: `6e400001-b5a3-f393-e0a9-e50e24dcca9e`)
-- **Characteristic UUID**: For data packets (default: `6e400002-b5a3-f393-e0a9-e50e24dcca9e`)
-- **Device Name**: Appears in BLE scan (configurable)
+- Service UUID: Configured in BLE settings (default: `6e400001-b5a3-f393-e0a9-e50e24dcca9e`)
+- Characteristic UUID: For data packets (default: `6e400002-b5a3-f393-e0a9-e50e24dcca9e`)
+- Device Name: Appears in BLE scan (configurable)
 
-### **Mesh Priority**
-- **BLE Connected Node**: Automatically becomes mesh root
-- **Multiple BLE Connections**: Newest connection wins
-- **No BLE**: Nodes elect autonomous root via algorithm
+### Mesh Priority
+- BLE Connected Node: Automatically becomes mesh root
+- Multiple BLE Connections: Newest connection wins
+- No BLE: Nodes elect autonomous root via algorithm
 
-## 🛠️ **Troubleshooting**
+## Troubleshooting
 
-### **LED Issues**
+### LED Issues
 | Problem | Solution |
 |---------|----------|
 | LEDs don't light up | Check GPIO pin, power supply, wiring |
 | Wrong colors | Verify WS2812B vs WS2812 timing |
 | Flickering | Add capacitor, check power supply |
 
-### **Mesh Issues**  
+### Mesh Issues  
 | Problem | Solution |
 |---------|----------|
 | Nodes don't connect | Check mesh channel, power cycle all nodes |
 | Split brain (multiple roots) | Update firmware, check election timeout |
 | Poor range | Check antenna, reduce interference |
 
-### **Configuration Issues**
+### Configuration Issues
 | Problem | Solution |
 |---------|----------|
 | Config not saving | Check NVS partition, flash memory |
 | Wrong platform detected | Verify `idf.py set-target` command |
 | Build errors | Run `idf.py menuconfig` to fix missing config |
 
-### **Memory Issues**
+### Memory Issues
 | Problem | Solution |
 |---------|----------|
 | Crashes with many LEDs | Reduce LED count, check power supply |
 | Out of memory | Use ESP32 instead of ESP32C3 for large installations |
 
-## 📊 **Performance Guidelines**
+## Performance Guidelines
 
-### **LED Count Recommendations**
+### LED Count Recommendations
 | Platform | Conservative | Aggressive | Maximum Tested |
 |----------|--------------|------------|-----------------|
-| **ESP32-C3** | 30 LEDs | 60 LEDs | 100 LEDs |
-| **ESP32** | 60 LEDs | 144 LEDs | 300+ LEDs |
-| **ESP32-S3** | 100 LEDs | 200 LEDs | 500+ LEDs |
+| ESP32-C3 | 30 LEDs | 60 LEDs | 100 LEDs |
+| ESP32 | 60 LEDs | 144 LEDs | 300+ LEDs |
+| ESP32-S3 | 100 LEDs | 200 LEDs | 500+ LEDs |
 
-### **Network Size Recommendations**
-- **Small Network**: 2-5 nodes (excellent performance)
-- **Medium Network**: 6-15 nodes (good performance)  
-- **Large Network**: 16-30 nodes (requires optimization)
+### Network Size Recommendations
+- Small Network: 2-5 nodes (excellent performance)
+- Medium Network: 6-15 nodes (good performance)  
+- Large Network: 16-30 nodes (requires optimization)
 
-## 🔒 **Security Configuration**
+## Security Configuration
 
-### **Enable Mesh Encryption** (Future)
+### Enable Mesh Encryption (Future)
 ```bash
 # menuconfig → "ESP32 LED Mesh Configuration" → "Mesh Network Configuration"
 # → Enable Mesh Encryption → Yes
 ```
 
-### **Enable BLE Security** (Future)
+### Enable BLE Security (Future)
 ```bash  
 # menuconfig → "ESP32 LED Mesh Configuration" → "BLE Configuration"
 # → Enable BLE Security → Yes
 ```
 
-## 📚 **API Reference**
+## API Reference
 
-### **Configuration Functions**
+### Configuration Functions
 ```cpp
 // LED Configuration
 config.setLedPin(pin);                    // 0-48 (platform dependent)
@@ -294,13 +309,13 @@ config.setMainLoopDelayMs(delay);         // 1-1000ms
 config.setDebugLoggingEnabled(enabled);   // true/false
 ```
 
-### **Platform Detection**
+### Platform Detection
 ```cpp
 config.getPlatformName();                 // "ESP32", "ESP32-C3", etc.
 config.isDualCoreEnabled();               // true for ESP32/ESP32S3
 ```
 
-### **Convenience Macros**
+### Convenience Macros
 ```cpp
 LED_PIN()           // Current LED pin
 LED_COUNT()         // Current LED count  
@@ -310,7 +325,7 @@ BLE_DEVICE_NAME()   // Current BLE device name
 
 ---
 
-## 🚀 **Ready to Go!**
+## Ready to Go
 
 Your ESP32 LED Mesh system is now configured for your specific hardware. The system will automatically:
 - Detect your ESP32 platform and optimize accordingly
@@ -319,4 +334,4 @@ Your ESP32 LED Mesh system is now configured for your specific hardware. The sys
 - Advertise BLE with your custom device name
 - Save all runtime changes to flash memory
 
-**Need help?** Check the `main/system/config_demo.cpp` file for detailed integration examples!
+Need help? Check the `main/system/config_demo.cpp` file for detailed integration examples!

@@ -24,6 +24,13 @@
 #endif
 #define PHYSICAL_LED_STRIP_LENGTH 144  // Total LEDs on physical strip (for clearing extras)
 
+// TEMPORARY SOLUTION: Hardware power safety limits for ESP32-C3
+// TODO: Replace with dynamic power management based on actual power requirements analysis
+// FIXME: Investigate if component selection (TPS61322A boost converter) allows higher brightness
+#ifdef CONFIG_IDF_TARGET_ESP32C3
+#define HARDWARE_MAX_BRIGHTNESS_ESP32C3 110  // TPS61322A safe limit (~1.6A max output)
+#endif
+
 // Dual-core processing message types
 enum class LEDCommandType {
     UPDATE_PATTERN,
