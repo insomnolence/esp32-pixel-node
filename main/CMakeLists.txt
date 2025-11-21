@@ -10,8 +10,7 @@ set(COMPONENT_SRCS
     "mesh/adaptive/neighbor_manager.cpp"
     "mesh/adaptive/topology_manager.cpp"
     "mesh/adaptive/router.cpp"
-    "packet/generic_packet.cpp"
-    "packet/led_packet_processor.cpp"
+    "mesh/adaptive/router.cpp"
     "system/nvs_manager.cpp"
     "system/network_health.cpp"
     "led/led_strip.cpp"
@@ -37,4 +36,4 @@ if(CONFIG_BUTTON_INTERFACE_ENABLED)
 endif()
 
 idf_component_register(SRCS ${COMPONENT_SRCS}
-    INCLUDE_DIRS "." "bluetooth" "mesh" "mesh/adaptive" "packet" "led" "system" "utils")
+    INCLUDE_DIRS "." "bluetooth" "mesh" "mesh/adaptive" "led" "system" "utils")

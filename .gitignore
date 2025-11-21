@@ -32,7 +32,12 @@
 *.app
 
 # Build Directory
-buid/
+build/
+sdkconfig
+sdkconfig.old
+managed_components/
+dependencies.lock
 
 # VSCode
 .vscode/
+.clangd/

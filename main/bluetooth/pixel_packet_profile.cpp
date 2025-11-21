@@ -1,6 +1,6 @@
 #include "pixel_packet_profile.h"
 #include "esp_log.h"
-#include "packet.h"
+#include "packet/packet.h"
 #include "ble_gap_handler.h"
 #include "string.h"
 #include "esp_gatts_api.h" // For esp_ble_gatts_close

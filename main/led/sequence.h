@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../packet/packet.h"
+#include "packet/packet.h"
 #include "pattern.h"
 #include <stdint.h>
 

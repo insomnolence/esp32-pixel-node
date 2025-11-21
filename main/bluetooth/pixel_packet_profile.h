@@ -1,7 +1,7 @@
 #pragma once
 
 #include "gatt_profile.h"
-#include "../packet/generic_packet.h"
+#include "packet/generic_packet.h"
 #include <functional>
 
 class PixelPacketProfile : public GattProfile {

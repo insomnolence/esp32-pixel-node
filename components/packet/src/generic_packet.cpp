@@ -1,4 +1,4 @@
-#include "generic_packet.h"
+#include "packet/generic_packet.h"
 #include "esp_log.h"
 
 static const char* TAG = "GenericPacket";

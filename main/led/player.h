@@ -8,7 +8,7 @@
 // LED timing type to avoid conflicts with system time_t  
 typedef uint32_t led_time_t;
 
-#include "../packet/packet.h"  // For RadioPixel protocol compatibility
+#include "packet/packet.h"  // For RadioPixel protocol compatibility
 #include "pattern.h"
 #include "sequence.h"
 #include "led_strip.h"

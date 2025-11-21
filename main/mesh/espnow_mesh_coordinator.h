@@ -9,7 +9,7 @@
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
 #include "freertos/semphr.h"
-#include "../packet/generic_packet.h"
+#include "packet/generic_packet.h"
 #include <functional>
 #include <memory>
 #include <set>

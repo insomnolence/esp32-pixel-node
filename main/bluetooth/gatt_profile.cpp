@@ -3,7 +3,7 @@
 #include "ble_gap_handler.h"
 #include "esp_gap_ble_api.h"
 #include "esp_log.h"
-#include "packet.h"
+#include "packet/packet.h"
 
 #include <string.h> // For memset
 #include <stdio.h>

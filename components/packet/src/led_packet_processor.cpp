@@ -1,4 +1,4 @@
-#include "led_packet_processor.h"
+#include "packet/led_packet_processor.h"
 #include <string.h>
 
 const char* LedPacketProcessor::TAG = "LedPacketProcessor";
