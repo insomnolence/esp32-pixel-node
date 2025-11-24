@@ -1,7 +1,7 @@
 #include "bluetooth/ble_gatt_server.h"
 #include "bluetooth/ble_gap_handler.h"
 #include "bluetooth/gatt_profile.h"
-#include "system/nvs_manager.h"
+#include "system_control/nvs_manager.h"
 #include "system/network_health.h"
 #include "bluetooth/pixel_packet_profile.h"
 #include "bluetooth/network_health_profile.h"
@@ -11,12 +11,12 @@
 #include "led/led_controller.h"
 
 #ifdef CONFIG_BUTTON_INTERFACE_ENABLED
-#include "system/button_manager.h"
-#include "system/button_logic.h"
-#include "system/button_feedback.h"
-#include "system/button_feedback_types.h"
-#include "system/dual_button_detector.h"
-#include "system/root_takeover_manager.h"
+#include "system_control/button_manager.h"
+#include "system_control/button_logic.h"
+#include "system_control/button_feedback.h"
+#include "common/button_feedback_types.h"
+#include "system_control/dual_button_detector.h"
+#include "system_control/root_takeover_manager.h"
 #endif
 
 #include "freertos/FreeRTOS.h"
@@ -27,8 +27,8 @@
 #include "esp_random.h"
 
 // Stack optimization utilities
-#include "utils/global_objects.h"
-#include "utils/stack_monitor.h"
+#include "system_control/global_objects.h"
+#include "system_control/stack_monitor.h"
 
 #include <functional>
 #include <memory>
@@ -65,7 +65,7 @@ extern "C" void app_main(void) {
         ESP_LOGE(MAIN_TAG, "❌ Failed to initialize NVS storage");
         return;
     }
-
+    
     // 🔗 Initialize ESP-NOW Mesh Coordinator (now on heap)
     auto& meshCoordinator = GlobalObjects::getMeshCoordinator();
     if (meshCoordinator.init() != ESP_OK) {
@@ -99,7 +99,7 @@ extern "C" void app_main(void) {
         return;
     }
 
-    // Register GATT callbacks BEFORE adding profiles  
+    // Register GATT callbacks BEFORE adding profiles
     BLEGapHandler gapHandler; // Small object, keep on stack
     if (bleGattServer.registerGattCallbacks() != ESP_OK || gapHandler.registerGapCallbacks() != ESP_OK) {
         ESP_LOGE(MAIN_TAG, "❌ Failed to register BLE GATT/GAP callbacks");
@@ -112,7 +112,7 @@ extern "C" void app_main(void) {
     const std::string characteristic_uuid_str = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
     std::shared_ptr<PixelPacketProfile> pixel_packet_profile = std::make_shared<PixelPacketProfile>(service_uuid_str, characteristic_uuid_str);
     bleGattServer.addProfile(pixel_packet_profile);
-    
+
     // 2. NetworkHealthProfile for mesh analytics
     const std::string health_service_uuid_str = "12345678-1234-1234-1234-123456789abc";
     const std::string health_characteristic_uuid_str = "87654321-4321-4321-4321-cba987654321";
@@ -250,7 +250,7 @@ extern "C" void app_main(void) {
     LedPacketProcessor ledProcessor;
     ledProcessor.setLedControlCallback([&ledController](const GenericPacket& packet, const char* format_info) {
         ESP_LOGI(MAIN_TAG, "🌈 LED Pattern Received: %s (%zu bytes)", format_info, packet.getLength());
-        
+
         // Process the packet with our LED controller
         esp_err_t ret = ledController.processPacket(packet);
         if (ret == ESP_OK) {
@@ -263,13 +263,13 @@ extern "C" void app_main(void) {
     // Set up mesh coordinator callbacks - now generic
     meshCoordinator.setPacketCallback([&ledProcessor](const GenericPacket& packet) {
         ESP_LOGI(MAIN_TAG, "Received LED pattern from mesh: %zu bytes", packet.getLength());
-        
+
         // Process LED pattern (handles current format and future formats automatically)
         if (!ledProcessor.processPacket(packet)) {
             ESP_LOGW(MAIN_TAG, "Failed to process LED pattern from mesh");
         }
     });
-    
+
     meshCoordinator.setRoleChangeCallback([&meshCoordinator
 #ifdef CONFIG_BUTTON_INTERFACE_ENABLED
                                           , &buttonLogic, &rootTakeoverManager
@@ -316,17 +316,17 @@ extern "C" void app_main(void) {
                 pixel_packet_profile->forceDisconnect(); // Force disconnect to give clear feedback
                 return; // Connection will be disconnected
             }
-            
-            ESP_LOGI(MAIN_TAG, "🔥 Mobile phone connected via BLE - becoming LED mesh root (Node 0x%04X)", 
+
+            ESP_LOGI(MAIN_TAG, "🔥 Mobile phone connected via BLE - becoming LED mesh root (Node 0x%04X)",
                      meshCoordinator.getNodeId());
             meshCoordinator.onBleConnected();
-            ESP_LOGI(MAIN_TAG, "🔥 BLE connection processing complete - new role: %s", 
+            ESP_LOGI(MAIN_TAG, "🔥 BLE connection processing complete - new role: %s",
                      meshCoordinator.getRoleString());
         } else {
-            ESP_LOGI(MAIN_TAG, "🔥 Mobile phone disconnected - stepping down from root role (Node 0x%04X)", 
+            ESP_LOGI(MAIN_TAG, "🔥 Mobile phone disconnected - stepping down from root role (Node 0x%04X)",
                      meshCoordinator.getNodeId());
             meshCoordinator.onBleDisconnected();
-            ESP_LOGI(MAIN_TAG, "🔥 BLE disconnection processing complete - new role: %s", 
+            ESP_LOGI(MAIN_TAG, "🔥 BLE disconnection processing complete - new role: %s",
                      meshCoordinator.getRoleString());
         }
     });
@@ -340,7 +340,7 @@ extern "C" void app_main(void) {
         } else {
             ESP_LOGI(MAIN_TAG, "🔥 Successfully processed LED pattern locally");
         }
-        
+
         // Forward to ESP-NOW mesh network if we're root
         if (meshCoordinator.isRootNode()) {
             ESP_LOGI(MAIN_TAG, "Broadcasting LED pattern to mesh network (%zu bytes)", packet.getLength());
@@ -361,7 +361,7 @@ extern "C" void app_main(void) {
     // Allow BLE stack to settle before starting advertising (especially important on ESP32-C3)
     // Increased delay to reduce ESP-NOW interference with BLE connection establishment
     vTaskDelay(pdMS_TO_TICKS(1000));
-    
+
     bleGattServer.startAdvertising();
 
     // Network health monitoring is initialized above and connected to BLE profile
@@ -403,16 +403,16 @@ extern "C" void app_main(void) {
             meshCoordinator.checkElectionTimeout();
             lastElectionTimeoutCheck = now;
         }
-        
+
         // Root nodes send periodic announcements (every 5 seconds)
-        // - BLE roots: Ensure autonomous roots know about superior BLE root and step down  
+        // - BLE roots: Ensure autonomous roots know about superior BLE root and step down
         // - Autonomous roots: Maintain root authority in absence of BLE root
         static uint32_t lastRootAnnouncement = 0;
         if (meshCoordinator.isRootNode() && (now - lastRootAnnouncement > 5000)) {
             meshCoordinator.sendRootAnnouncement();
             lastRootAnnouncement = now;
         }
-        
+
         // Update adaptive mesh components for neighbor discovery and topology management
         static uint32_t lastAdaptiveMeshUpdate = 0;
         if (now - lastAdaptiveMeshUpdate >= 1000) { // Update every 1 second for responsive neighbor discovery
@@ -440,7 +440,7 @@ extern "C" void app_main(void) {
         if (now - lastHealthUpdate > 60000) {
             const auto& stats = meshCoordinator.getNetworkStats();
             size_t active_neighbors = meshCoordinator.getActiveNeighborCount();
-            
+
             // Convert mesh stats to simple format and update network health
             MeshStats meshStats = {
                 .packets_sent = stats.packets_sent,
@@ -448,21 +448,20 @@ extern "C" void app_main(void) {
                 .packets_dropped = stats.packets_dropped,
                 .send_failures = stats.send_failures
             };
-            // TODO: Implement RSSI collection in mesh coordinator
-            int8_t avg_rssi = -65;  // Placeholder RSSI value (good signal strength)
-            
+            int8_t avg_rssi = meshCoordinator.getAverageNeighborRSSI();
+
             networkHealthMonitor.updateMetrics(meshStats, active_neighbors, avg_rssi,
                                               meshCoordinator.isRootNode() ? (meshCoordinator.isBleConnected() ? 1 : 2) : 0,
                                               meshCoordinator.getReachableNodeCount());
-            
+
             const NetworkHealth& health = networkHealthMonitor.getCurrentHealth();
-            
+
             // Send network health via BLE characteristic for Flutter app
             health_profile->sendHealthUpdate();
-            
+
             // Single concise status line with network health
-            ESP_LOGI(MAIN_TAG, "Node 0x%04X | %s | LED:%s | Health:%u%% (%u neighbors, %u%% success)", 
-                     meshCoordinator.getNodeId(), 
+            ESP_LOGI(MAIN_TAG, "Node 0x%04X | %s | LED:%s | Health:%u%% (%u neighbors, %u%% success)",
+                     meshCoordinator.getNodeId(),
                      meshCoordinator.getRoleString(),
                      ledController.getCurrentSequenceType(),
                      health.overall_score,
@@ -507,17 +506,17 @@ extern "C" void app_main(void) {
         static uint32_t lastNeighborDebug = 0;
         if (meshCoordinator.isAdaptiveMeshEnabled() && (now - lastNeighborDebug > 30000)) { // Every 30 seconds
             size_t neighborCount = meshCoordinator.getActiveNeighborCount();
-            ESP_LOGI(MAIN_TAG, "🔍 NEIGHBOR DEBUG - Active neighbors: %zu, Adaptive mesh enabled: %s", 
+            ESP_LOGI(MAIN_TAG, "🔍 NEIGHBOR DEBUG - Active neighbors: %zu, Adaptive mesh enabled: %s",
                      neighborCount, meshCoordinator.isAdaptiveMeshEnabled() ? "YES" : "NO");
-            
+
             // Print current network health data
             NetworkHealth health = networkHealthMonitor.getCurrentHealth();
             ESP_LOGI(MAIN_TAG, "📊 HEALTH DEBUG - Score: %d%%, Neighbors: %d, Success: %d%%, Role: %d",
                      health.overall_score, health.active_neighbors, health.packet_success_rate, health.mesh_role);
-            
+
             lastNeighborDebug = now;
         }
-        
+
         #ifdef CONFIG_LOG_MAXIMUM_LEVEL_DEBUG
         static uint32_t lastDetailedStatus = 0;
         if (meshCoordinator.isAdaptiveMeshEnabled() && (now - lastDetailedStatus > 300000)) { // Every 5 minutes

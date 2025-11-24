@@ -34,6 +34,23 @@ idf.py menuconfig
 ```
 Navigate to: "ESP32 LED Mesh Configuration"
 
+## Project Structure
+
+The project is organized into ESP-IDF components so each subsystem stays isolated and testable:
+
+| Path | Purpose |
+|------|---------|
+| `main/` | Application entry point (`main.cpp`) that wires components together and reacts to `CONFIG_*` flags. |
+| `components/mesh/` | Adaptive ESP-NOW mesh coordinator and routing stack. |
+| `components/bluetooth/` | BLE GATT server, GAP handler, and the Pixel Packet / Network Health profiles. |
+| `components/led/` | LED renderer, patterns, and strip driver abstraction. |
+| `components/packet/` | Packet serialization/parsing helpers plus Unity tests. |
+| `components/common/` | Shared lightweight headers (e.g., button feedback enums). |
+| `components/system_control/` | Local device services (NVS, global object manager, stack monitor) and the optional button/feedback/root-takeover pipeline. Sources in this component are compiled only when `CONFIG_BUTTON_INTERFACE_ENABLED=y`. |
+| `components/system_support/` | Shared data models such as `NetworkHealth` used by BLE and mesh code. |
+
+When in doubt, look for the subsystem inside `components/<name>` instead of under `main/`; the entrypoint now delegates almost everything to these components.
+
 ## Hardware Configuration
 
 ### LED Strip Configuration
@@ -125,41 +142,43 @@ Customize BLE advertising and connection:
 
 ## Runtime Configuration
 
-### Programmatic Configuration
-Change settings in your code:
+Most runtime behavior is controlled through `idf.py menuconfig` (see the "ESP32 LED Mesh Configuration" menu). Code-level hooks now live in `components/system_control`, which centralizes the local device services (NVS, stack monitoring, button interface, and global object management).
+
+### Accessing Global Services in Code
+
+`components/system_control/global_objects.*` exposes the mesh coordinator, BLE server, and LED controller as heap-allocated singletons. You can safely access them anywhere after `GlobalObjects::initialize()` succeeds:
 
 ```cpp
-#include "system/system_config.h"
+#include "system_control/global_objects.h"
+#include "mesh/espnow_mesh_coordinator.h"
+#include "led/led_controller.h"
 
-void setup_my_configuration() {
-    SystemConfig& config = SystemConfig::getInstance();
-    config.init();
-    
-    // Configure for your hardware
-    config.setLedPin(5);              // Your LED pin
-    config.setLedCount(48);           // Your LED count
-    config.setBLEDeviceName("MyNode");// Your device name
-    config.setMeshChannel(11);        // Your mesh channel
-    
-    // Save to flash memory (persists across reboots)
-    config.saveToNVS();
-    
-    // Verify configuration
-    config.printConfiguration();
+void inspect_runtime_state() {
+    auto& mesh = GlobalObjects::getMeshCoordinator();
+    ESP_LOGI("Setup", "Adaptive mesh enabled: %s",
+             mesh.isAdaptiveMeshEnabled() ? "yes" : "no");
+
+    auto& leds = GlobalObjects::getLEDController();
+    ESP_LOGI("Setup", "LED count: %u, pin: %u",
+             leds.getLedCount(), leds.getLedPin());
 }
 ```
 
-### Check Your Platform
-```cpp
-void check_platform() {
-    SystemConfig& config = SystemConfig::getInstance();
-    
-    ESP_LOGI("Setup", "Platform: %s", config.getPlatformName());
-    ESP_LOGI("Setup", "Dual-core: %s", config.isDualCoreEnabled() ? "Yes" : "No");
-    ESP_LOGI("Setup", "LED Pin: %d", config.getLedPin());
-    ESP_LOGI("Setup", "LED Count: %d", config.getLedCount());
-}
+### Button Interface Toggle
+
+The standalone button/feedback/root-takeover stack (now under `components/system_control`) is optional. Enable it via:
+
 ```
+menuconfig → ESP32 LED Mesh Configuration → Button Interface → Enable Button Interface
+```
+
+When `CONFIG_BUTTON_INTERFACE_ENABLED=y`, the build pulls in `button_manager`, `button_logic`, `button_feedback`, `dual_button_detector`, and `root_takeover_manager`. Disabling the option keeps the binary lean for installations that are controlled purely over BLE.
+
+### Customizing Persistence & Diagnostics
+
+- `components/system_control/nvs_manager.*` manages device settings stored in NVS. Extend it if you need additional persisted values.
+- `components/system_control/stack_monitor.*` provides the `LOG_CURRENT_STACK()` macro used throughout `main.cpp`—handy when tuning FreeRTOS tasks for different targets.
+- Shared network-health structs used by BLE are defined once in `components/system_support`, so BLE and mesh code stay in sync.
 
 ## Building and Flashing
 
@@ -192,13 +211,14 @@ idf.py monitor
 ```
 
 ### Configuration Verification
-After flashing, look for this output:
+After flashing, confirm that the core components report healthy startup:
 ```
-I (1234) SystemConfig: Platform: ESP32-C3 (dual-core: no)
-I (1235) SystemConfig: LED: pin=7, count=60, strip_length=60, update_interval=20ms
-I (1236) SystemConfig: Mesh: channel=6, ttl=4, payload_len=200, cleanup_interval=30000ms
-I (1237) SystemConfig: BLE: device='ESP_LED_NODE', packet_size=244
+I (1234) GlobalObjects: 🏭 Initializing global objects on heap...
+I (1240) ESPNowMeshCoordinator: ✅ Adaptive mesh system enabled - ready for topology-aware networking
+I (1250) BLEGattServer: 🔍 BLE advertising started successfully
+I (1260) ESP_LED_MESH: 🔄 Enabling adaptive mesh system...
 ```
+If any of these lines are missing (or show errors), check the component mentioned in the log and revisit `menuconfig`/wiring.
 
 ## Hardware Wiring Guide
 
@@ -287,44 +307,6 @@ Your mobile app should connect to:
 # → Enable BLE Security → Yes
 ```
 
-## API Reference
-
-### Configuration Functions
-```cpp
-// LED Configuration
-config.setLedPin(pin);                    // 0-48 (platform dependent)
-config.setLedCount(count);                // 1-1000
-config.setLedUpdateIntervalMs(interval);  // 1-1000ms (1000-1 FPS)
-
-// Mesh Configuration  
-config.setMeshChannel(channel);           // 1-14 (WiFi channels)
-config.setMeshDefaultTTL(ttl);            // 1-10 hops
-
-// BLE Configuration
-config.setBLEDeviceName(name);            // Max 30 characters
-config.setBLEServiceUUID(uuid);           // UUID format string
-
-// System Configuration
-config.setMainLoopDelayMs(delay);         // 1-1000ms
-config.setDebugLoggingEnabled(enabled);   // true/false
-```
-
-### Platform Detection
-```cpp
-config.getPlatformName();                 // "ESP32", "ESP32-C3", etc.
-config.isDualCoreEnabled();               // true for ESP32/ESP32S3
-```
-
-### Convenience Macros
-```cpp
-LED_PIN()           // Current LED pin
-LED_COUNT()         // Current LED count  
-MESH_CHANNEL()      // Current mesh channel
-BLE_DEVICE_NAME()   // Current BLE device name
-```
-
----
-
 ## Ready to Go
 
 Your ESP32 LED Mesh system is now configured for your specific hardware. The system will automatically:
@@ -334,4 +316,4 @@ Your ESP32 LED Mesh system is now configured for your specific hardware. The sys
 - Advertise BLE with your custom device name
 - Save all runtime changes to flash memory
 
-Need help? Check the `main/system/config_demo.cpp` file for detailed integration examples!
+Need help? Browse the component sources (`components/system_control`, `components/mesh`, `components/bluetooth`, etc.) for real-world integration examples and extension points.

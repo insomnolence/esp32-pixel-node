@@ -3,6 +3,22 @@
 
 const char* LedPacketProcessor::TAG = "LedPacketProcessor";
 
+// Named constants for 19-byte mobile app packet format
+// This format may differ from the current Packet struct in future versions
+namespace MobileAppPacket {
+    static constexpr size_t SIZE = 19;
+    static constexpr size_t OFFSET_COMMAND = 0;
+    static constexpr size_t OFFSET_BRIGHTNESS = 1;
+    static constexpr size_t OFFSET_SPEED = 2;
+    static constexpr size_t OFFSET_PATTERN = 3;
+    static constexpr size_t OFFSET_COLOR0 = 4;
+    static constexpr size_t OFFSET_COLOR1 = 8;
+    static constexpr size_t OFFSET_COLOR2 = 12;
+    static constexpr size_t OFFSET_LEVEL0 = 16;
+    static constexpr size_t OFFSET_LEVEL1 = 17;
+    static constexpr size_t OFFSET_LEVEL2 = 18;
+}
+
 LedPacketProcessor::LedPacketProcessor() {
     ESP_LOGI(TAG, "LED Packet Processor initialized");
 }
@@ -55,8 +71,9 @@ LedPacketProcessor::PacketFormat LedPacketProcessor::detectPacketFormat(const Ge
     }
     
     // Handle 19-byte mobile app packets
-    if (packet.getLength() == 19) {
-        ESP_LOGI(TAG, "📱 Detected 19-byte mobile app packet - treating as current format");
+    if (packet.getLength() == MobileAppPacket::SIZE) {
+        ESP_LOGI(TAG, "📱 Detected %zu-byte mobile app packet - treating as current format",
+                 MobileAppPacket::SIZE);
         return PacketFormat::CURRENT_PACKET_V1;
     }
     
@@ -73,26 +90,39 @@ bool LedPacketProcessor::processCurrentPacket(const GenericPacket& packet) {
         ESP_LOGI(TAG, "✅ Exact packet format match - processing current packet format (V1)");
     } 
     // Handle 19-byte packets manually (mobile app format)
-    else if (packet.getLength() == 19) {
-        ESP_LOGI(TAG, "📱 Manual parsing of 19-byte mobile app packet");
+    else if (packet.getLength() == MobileAppPacket::SIZE) {
+        ESP_LOGI(TAG, "📱 Manual parsing of %zu-byte mobile app packet", MobileAppPacket::SIZE);
         const uint8_t* data = packet.getData();
-        
-        // Parse the packet manually (little-endian format expected)
-        current_pkt.command = data[0];
-        current_pkt.brightness = data[1];
-        current_pkt.speed = data[2];
-        current_pkt.pattern = data[3];
-        
+
+        // Defensive validation
+        if (!data) {
+            ESP_LOGE(TAG, "❌ Packet data pointer is null");
+            return false;
+        }
+
+        // Verify we have enough data (defensive check)
+        if (packet.getLength() < MobileAppPacket::SIZE) {
+            ESP_LOGE(TAG, "❌ Packet too small: %zu < %zu",
+                     packet.getLength(), MobileAppPacket::SIZE);
+            return false;
+        }
+
+        // Parse the packet manually using named offsets (little-endian format expected)
+        current_pkt.command = data[MobileAppPacket::OFFSET_COMMAND];
+        current_pkt.brightness = data[MobileAppPacket::OFFSET_BRIGHTNESS];
+        current_pkt.speed = data[MobileAppPacket::OFFSET_SPEED];
+        current_pkt.pattern = data[MobileAppPacket::OFFSET_PATTERN];
+
         // Parse color array (3 x uint32_t = 12 bytes)
-        memcpy(&current_pkt.color[0], &data[4], 4);
-        memcpy(&current_pkt.color[1], &data[8], 4);
-        memcpy(&current_pkt.color[2], &data[12], 4);
-        
-        // Parse level array (3 x uint8_t = 3 bytes)  
-        current_pkt.level[0] = data[16];
-        current_pkt.level[1] = data[17];
-        current_pkt.level[2] = data[18];
-        
+        memcpy(&current_pkt.color[0], &data[MobileAppPacket::OFFSET_COLOR0], sizeof(uint32_t));
+        memcpy(&current_pkt.color[1], &data[MobileAppPacket::OFFSET_COLOR1], sizeof(uint32_t));
+        memcpy(&current_pkt.color[2], &data[MobileAppPacket::OFFSET_COLOR2], sizeof(uint32_t));
+
+        // Parse level array (3 x uint8_t = 3 bytes)
+        current_pkt.level[0] = data[MobileAppPacket::OFFSET_LEVEL0];
+        current_pkt.level[1] = data[MobileAppPacket::OFFSET_LEVEL1];
+        current_pkt.level[2] = data[MobileAppPacket::OFFSET_LEVEL2];
+
         ESP_LOGI(TAG, "🔧 Manual parsing complete");
     } 
     else {
