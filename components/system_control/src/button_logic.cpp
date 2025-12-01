@@ -88,9 +88,18 @@ void ButtonLogic::onMeshRoleChanged(bool is_root) {
              is_root ? "ROOT" : "CLIENT");
     
     if (!is_root && previous_root) {
-        // Lost root status - reset button state to idle
+        // Lost root status - reset button state and LED pattern to idle
+        // This allows the node to start receiving patterns from the new root
         transitionToState(STATE_IDLE);
-        ESP_LOGI(TAG, "🔴 Button state reset to IDLE due to loss of root status");
+        led_controller_->setIdleMode();
+        ESP_LOGI(TAG, "🔴 Lost root status - LED pattern reset to IDLE, ready to receive from new root");
+    }
+
+    if (is_root && !previous_root) {
+        // Gained root status - broadcast idle pattern to synchronize network
+        transitionToState(STATE_IDLE);
+        led_controller_->setIdleMode();
+        ESP_LOGI(TAG, "🟢 Button control gained root - broadcasting idle pattern to network");
     }
 }
 
@@ -101,10 +110,10 @@ void ButtonLogic::handleButton1Press() {
         // Silent blocking - no visual feedback to avoid pattern interruption
         return;
     }
-    
+
     // Show button press acknowledgment feedback
     feedback_controller_->showFeedback(BUTTON_PRESS_FEEDBACK);
-    
+
     // Process Button 1 state machine: Idle → Warning → Exit → Idle
     switch (current_state_) {
         case STATE_IDLE:
@@ -112,22 +121,23 @@ void ButtonLogic::handleButton1Press() {
             transitionToState(STATE_WARNING);
             led_controller_->setWarningMode();
             break;
-            
+
         case STATE_WARNING:
             ESP_LOGI(TAG, "🔴 Button 1: Warning → Exit (root control)");
             transitionToState(STATE_EXIT);
             led_controller_->setExitMode();
             break;
-            
+
         case STATE_EXIT:
             ESP_LOGI(TAG, "🔴 Button 1: Exit → Idle (root control)");
             transitionToState(STATE_IDLE);
             led_controller_->setIdleMode();
             break;
-            
+
         default:
             ESP_LOGW(TAG, "Button 1 pressed in unknown state: %d", current_state_);
             transitionToState(STATE_IDLE);
+            led_controller_->setIdleMode();
             break;
     }
 }
@@ -139,17 +149,26 @@ void ButtonLogic::handleButton2Press() {
         // Silent blocking - no visual feedback to avoid pattern interruption
         return;
     }
-    
+
     // Show button press acknowledgment feedback
     feedback_controller_->showFeedback(BUTTON_PRESS_FEEDBACK);
-    
-    ESP_LOGI(TAG, "🔵 Button 2: New random pattern selected (root control)");
+
+    ESP_LOGI(TAG, "🔵 Button 2: Random pattern selected (root control)");
     led_controller_->setRandomModeWithNewPattern();
-    // Note: Random mode doesn't affect Button 1 state machine
+
+    // Reset Button 1 state machine back to IDLE
+    // This means the next Button 1 press will start Warning again (not continue to Exit)
+    transitionToState(STATE_IDLE);
+    ESP_LOGI(TAG, "🔵 Button 1 state reset to IDLE (Button 2 interrupt)");
 }
 
 bool ButtonLogic::shouldIgnoreButtons() const {
-    // Buttons only work when this node is a root node
+    // Buttons are ignored when:
+    // 1. This node is not the root node (another node controls the network)
+    // 2. BLE is connected (mobile app has priority over buttons)
+    if (ble_connected_) {
+        return true;  // BLE has priority - ignore buttons
+    }
     return !is_root_node_;
 }
 
@@ -165,8 +184,14 @@ void ButtonLogic::transitionToState(ButtonState new_state) {
 
 void ButtonLogic::checkStateTimeout() {
     uint32_t now = esp_timer_get_time() / 1000;
-    
+
     // Check for state timeout (recovery mechanism)
+    // Skip timeout for WARNING and EXIT states - they have long-running sequences
+    // that should play to completion (Flash→March→MiniTwinkle→Gradient)
+    if (current_state_ == STATE_WARNING || current_state_ == STATE_EXIT) {
+        return; // Let the sequence run to completion
+    }
+
     if (now - last_state_change_ > STATE_TIMEOUT_MS) {
         if (current_state_ != STATE_IDLE) {
             ESP_LOGW(TAG, "State timeout after %u ms - returning to IDLE", STATE_TIMEOUT_MS);

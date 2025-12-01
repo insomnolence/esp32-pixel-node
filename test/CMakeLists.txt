@@ -5,7 +5,8 @@ cmake_minimum_required(VERSION 3.16)
 set(EXTRA_COMPONENT_DIRS "../components")
 
 # List of components that should have their tests included in this test app.
-set(TEST_COMPONENTS "packet;led;mesh;system_support" CACHE STRING "List of components to test")
+# Note: bluetooth excluded - GattProfile needs full BleHardwareInterface refactor to be testable
+set(TEST_COMPONENTS "packet;led;mesh;system_support;system_control" CACHE STRING "List of components to test")
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 

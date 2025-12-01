@@ -7,6 +7,7 @@
 #include "esp_gatts_api.h"
 #include "esp_gatt_common_api.h"
 #include "bluetooth/gatt_profile.h" // Include for gatts_profile_inst_t
+#include "bluetooth/ble_hardware_interface.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include <functional>
@@ -15,7 +16,8 @@
 
 class BLEGattServer {
 public:
-    BLEGattServer();
+    // Constructor with hardware interface for dependency injection (preferred for testability)
+    explicit BLEGattServer(BleHardwareInterface* hardware);
     ~BLEGattServer();
 
     esp_err_t init();
@@ -31,10 +33,9 @@ public:
     static void staticValidateGattHealth(); // Static version callable from anywhere
 
 private:
+    BleHardwareInterface* hardware_; // Hardware abstraction layer
     std::vector<std::shared_ptr<GattProfile>> profile_list;
     void handleGattsEvent(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-    esp_err_t bleControllerInitAndEnable();
-    esp_err_t bleBluedroidInitAndEnable();
     static const char* TAG;
     esp_ble_adv_params_t adv_params;
     static BLEGattServer* instance; // Declare the static instance variable

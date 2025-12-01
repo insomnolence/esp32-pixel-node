@@ -5,6 +5,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "system_control/button_manager.h"
+#include "packet/packet.h"
 
 // Forward declarations
 class LEDController;

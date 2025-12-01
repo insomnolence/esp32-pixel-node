@@ -1,9 +1,10 @@
 #include "system_control/button_feedback.h"
 #include "led/led_controller.h"
-#include "led/led_strip.h"
+#include "led/led_strip_interface.h"
 #include "esp_timer.h"
+#include <cstring>
 
-const char* ButtonFeedbackController::TAG = "ButtonFeedback";
+const char* ButtonFeedbackController::TAG = "ButtonFeedbackController";
 
 ButtonFeedbackController::ButtonFeedbackController(LEDController* led_controller)
     : led_controller_(led_controller)
@@ -109,7 +110,7 @@ void ButtonFeedbackController::update() {
 }
 
 void ButtonFeedbackController::updateAnimatedPatterns(uint32_t elapsed_ms) {
-    LEDStrip* strip = led_controller_->getLEDStrip();
+    ILedStrip* strip = led_controller_->getLEDStrip();
     if (!strip) {
         return;
     }
@@ -157,7 +158,7 @@ void ButtonFeedbackController::saveCurrentPattern() {
         return;
     }
     
-    LEDStrip* strip = led_controller_->getLEDStrip();
+    ILedStrip* strip = led_controller_->getLEDStrip();
     if (!strip) {
         ESP_LOGW(TAG, "Cannot save pattern - LED strip not available");
         return;
@@ -195,7 +196,7 @@ void ButtonFeedbackController::restorePattern() {
         return;
     }
     
-    LEDStrip* strip = led_controller_->getLEDStrip();
+    ILedStrip* strip = led_controller_->getLEDStrip();
     if (!strip) {
         ESP_LOGW(TAG, "Cannot restore pattern - LED strip not available");
         pattern_saved_ = false;
@@ -222,7 +223,7 @@ void ButtonFeedbackController::restorePattern() {
 }
 
 void ButtonFeedbackController::applyFeedbackPattern(FeedbackType type) {
-    LEDStrip* strip = led_controller_->getLEDStrip();
+    ILedStrip* strip = led_controller_->getLEDStrip();
     if (!strip) {
         ESP_LOGW(TAG, "Cannot apply feedback pattern - LED strip not available");
         return;

@@ -1,6 +1,7 @@
 #pragma once
 
-#include "led/led_strip.h"
+#include "led/led_strip_interface.h"
+#include "led/led_strip.h" // Keep for LEDStrip concrete type visibility if needed by others, or remove if possible
 #include "led/player.h"
 #include "led/sequence.h"
 #include "packet/generic_packet.h"
@@ -9,6 +10,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
+#include "freertos/semphr.h"
+#include <functional>
 #include <memory>
 
 // Default LED pin based on target platform
@@ -60,18 +63,25 @@ struct LEDCommand {
     } data;
 };
 
+// Callback type for broadcasting patterns to mesh
+using PatternBroadcastCallback = std::function<void(const GenericPacket&)>;
+
+// Callback type for checking root status (for return-to-idle behavior)
+using RootStatusCallback = std::function<bool()>;
+
 // Centralized LED controller that manages strip, player, and sequences
 class LEDController {
 public:
-    LEDController(uint8_t pin = DEFAULT_LED_PIN, uint16_t count = DEFAULT_LED_COUNT);
+    LEDController(ILedStrip* strip);
     ~LEDController();
 
     // Initialization
-    esp_err_t begin();
-    
+    // useTaskMode: true (default) for production, false for unit tests to run synchronously
+    esp_err_t begin(bool useTaskMode = true);
+
     // Process packets from BLE/mesh
     esp_err_t processPacket(const GenericPacket& packet);
-    
+
     // Manual sequence control
     void setIdleMode();
     void setAlertMode();
@@ -79,25 +89,34 @@ public:
     void setWarningMode();  // Warning pattern (yellow)
     void setExitMode();     // Exit pattern (red)
     void setRandomModeWithNewPattern(); // Random mode with fresh random pattern selection
-    
+
     // Note: Visual feedback methods moved to ButtonFeedbackController for local-only feedback
     void advanceSequence();
-    
+
     // Update loop (call from main loop)
     void update();
-    
+
     // Status
     bool isInitialized() const { return initialized; }
     const char* getCurrentSequenceType() const;
-    
+
     // Button feedback through LED task (prevents RMT timing conflicts on ESP32-C3)
     esp_err_t showButtonFeedback(FeedbackType type, uint32_t duration_ms);
-    
+
     // Direct LED access for local feedback (ButtonFeedbackController) - DEPRECATED: Use showButtonFeedback instead
-    LEDStrip* getLEDStrip() { return strip; }
-    
+    ILedStrip* getLEDStrip() { return strip; }
+
+    // Pattern broadcasting (for mesh integration)
+    void setPatternBroadcastCallback(PatternBroadcastCallback callback);
+
+    // Root status callback for return-to-idle behavior (root election redesign)
+    void setRootStatusCallback(RootStatusCallback callback);
+
+    // Called when pattern received from mesh (tracks last pattern time)
+    void onPatternReceived();
+
 private:
-    LEDStrip* strip;
+    ILedStrip* strip;
     Player* player;
     
     // Pre-defined sequences
@@ -115,7 +134,6 @@ private:
     Packet currentPacket;
     
     bool initialized;
-    const uint8_t ledPin;      // Const - never changes after construction
     const uint16_t ledCount;   // Const - never changes after construction
     
     // Button 2 single random pattern tracking
@@ -125,23 +143,34 @@ private:
     // LED task processing members (both ESP32 and ESP32C3)
     QueueHandle_t ledCommandQueue;
     TaskHandle_t ledTaskHandle;
+    SemaphoreHandle_t ledTaskExitSemaphore;  // Signals task has fully exited
     bool ledTaskMode;
+    volatile bool ledTaskShutdownRequested;  // Signal task to stop before queue deletion
     
     static const char* TAG;
     
+    // Pattern broadcast callback
+    PatternBroadcastCallback patternBroadcastCallback;
+
+    // Root status callback for return-to-idle (root election redesign)
+    RootStatusCallback rootStatusCallback;
+    uint32_t lastPatternReceivedTime;
+    uint32_t lastRootStatusCheck;
+
     // Helper methods
     esp_err_t parsePacketData(const GenericPacket& packet, Packet& parsedPacket) const;
     void logPacketInfo(const Packet& pkt) const;
     void cleanup(); // Clean up allocated resources on failure
     void setSequence(Sequence* sequence); // Platform-adaptive sequence setting
-    
+    void broadcastPattern(const Packet& packet); // Serialize and broadcast pattern via callback
+
     // LED task processing methods (both ESP32 and ESP32C3)
     esp_err_t initLEDTask();
     void shutdownLEDTask();
     static void ledProcessingTaskWrapper(void* parameter);
     void ledProcessingTask();
     bool sendLEDCommand(const LEDCommand& command, TickType_t timeout = portMAX_DELAY);
-    
+
     // Button feedback handling in LED task context
     void handleButtonFeedbackInLEDTask(FeedbackType type, uint32_t duration_ms);
 };

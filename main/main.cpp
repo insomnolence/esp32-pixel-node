@@ -2,7 +2,6 @@
 #include "bluetooth/ble_gap_handler.h"
 #include "bluetooth/gatt_profile.h"
 #include "system_control/nvs_manager.h"
-#include "system/network_health.h"
 #include "bluetooth/pixel_packet_profile.h"
 #include "bluetooth/network_health_profile.h"
 #include "mesh/espnow_mesh_coordinator.h"
@@ -42,11 +41,9 @@ extern "C" void app_main(void) {
     ESP_LOGI(MAIN_TAG, "🚀 Starting ESP32 LED Mesh with heap-optimized architecture");
     LOG_CURRENT_STACK();
     
-    // Enable debug logging for neighbor discovery
-    esp_log_level_set("NeighborManager", ESP_LOG_DEBUG);
+    // Enable debug logging for mesh coordinator
     esp_log_level_set("ESPNowMeshCoordinator", ESP_LOG_DEBUG);
-    esp_log_level_set("NetworkHealthMonitor", ESP_LOG_DEBUG);
-    ESP_LOGI(MAIN_TAG, "🔍 Enabled debug logging for mesh neighbor discovery components");
+    ESP_LOGI(MAIN_TAG, "🔍 Enabled debug logging for mesh coordinator components");
 
     // 🏭 HEAP ALLOCATION: Initialize large objects on heap for stack safety
     auto init_status = GlobalObjects::initialize();
@@ -73,18 +70,6 @@ extern "C" void app_main(void) {
         return;
     }
     
-    // Enable adaptive mesh system for topology-aware routing
-    ESP_LOGI(MAIN_TAG, "🔄 Enabling adaptive mesh system...");
-    esp_err_t adaptive_result = meshCoordinator.enableAdaptiveMesh();
-    if (adaptive_result == ESP_OK && meshCoordinator.isAdaptiveMeshEnabled()) {
-        ESP_LOGI(MAIN_TAG, "✅ Adaptive mesh system enabled - ready for topology-aware networking");
-        ESP_LOGI(MAIN_TAG, "📊 Adaptive mesh will begin neighbor discovery and topology analysis");
-        ESP_LOGI(MAIN_TAG, "🔍 Watch for neighbor discovery beacons and topology updates in logs");
-    } else {
-        ESP_LOGE(MAIN_TAG, "❌ Failed to enable adaptive mesh system: %s", esp_err_to_name(adaptive_result));
-        ESP_LOGE(MAIN_TAG, "⚠️ System cannot continue without adaptive mesh - aborting startup");
-        return;
-    }
 
     // 📱 Initialize BLE GATT Server (now on heap)
     auto& bleGattServer = GlobalObjects::getBLEServer();
@@ -100,7 +85,7 @@ extern "C" void app_main(void) {
     }
 
     // Register GATT callbacks BEFORE adding profiles
-    BLEGapHandler gapHandler; // Small object, keep on stack
+    BLEGapHandler gapHandler(&GlobalObjects::getBleHardware()); // Small object, keep on stack
     if (bleGattServer.registerGattCallbacks() != ESP_OK || gapHandler.registerGapCallbacks() != ESP_OK) {
         ESP_LOGE(MAIN_TAG, "❌ Failed to register BLE GATT/GAP callbacks");
         return;
@@ -118,10 +103,12 @@ extern "C" void app_main(void) {
     const std::string health_characteristic_uuid_str = "87654321-4321-4321-4321-cba987654321";
     std::shared_ptr<NetworkHealthProfile> health_profile = std::make_shared<NetworkHealthProfile>(health_service_uuid_str, health_characteristic_uuid_str);
     bleGattServer.addProfile(health_profile);
+
+    // Connect NetworkHealthMonitor to the profile
+    auto& healthMonitor = GlobalObjects::getNetworkHealthMonitor();
+    health_profile->setNetworkHealthMonitor(&healthMonitor);
+    health_profile->startPeriodicUpdates(5000); // Update every 5 seconds
     
-    // Create NetworkHealth monitor (moderate size, keep on stack for performance)
-    NetworkHealthMonitor networkHealthMonitor;
-    health_profile->setNetworkHealthMonitor(&networkHealthMonitor);
     
     // 💡 Initialize LED controller (now on heap)
     auto& ledController = GlobalObjects::getLEDController();
@@ -129,15 +116,33 @@ extern "C" void app_main(void) {
         ESP_LOGE(MAIN_TAG, "❌ Failed to initialize LED controller");
         return;
     }
-    
-    // 📊 Check stack usage after core system initialization
+
+    // Set up pattern broadcast callback for button-triggered modes
+    ledController.setPatternBroadcastCallback([&meshCoordinator](const GenericPacket& packet) {
+        if (meshCoordinator.isRootNode()) {
+            ESP_LOGI(MAIN_TAG, "Broadcasting button pattern to mesh network (%zu bytes)", packet.getLength());
+            if (meshCoordinator.sendLEDPattern(packet) != ESP_OK) {
+                ESP_LOGW(MAIN_TAG, "Failed to broadcast button pattern to mesh");
+            }
+        }
+    });
+
+    // Set up root status callback for return-to-idle when root disappears (root election redesign)
+    ledController.setRootStatusCallback([&meshCoordinator]() -> bool {
+        return meshCoordinator.hasActiveRoot() || meshCoordinator.isRootNode();
+    });
+
+    // Check stack usage after core system initialization
     LOG_CURRENT_STACK();
 
 #ifdef CONFIG_BUTTON_INTERFACE_ENABLED
-    // Initialize Button Interface (ESP32C3 custom board) - STATIC ALLOCATED FOR ESP32-C3 STACK SAFETY
+    // Initialize Button Interface (ESP32C3 custom board)
     ESP_LOGI(MAIN_TAG, "🔘 Initializing button interface for standalone control...");
     
-    static ButtonManager buttonManager;
+    // Get ButtonManager from GlobalObjects (already initialized)
+    auto& buttonManager = GlobalObjects::getButtonManager();
+
+    // Other components still static locals for now (TODO: Move to GlobalObjects)
     static ButtonFeedbackController buttonFeedback(&ledController);
     static ButtonLogic buttonLogic(&ledController, &meshCoordinator, &buttonFeedback);
     static DualButtonDetector dualButtonDetector;
@@ -154,7 +159,8 @@ extern "C" void app_main(void) {
     }
     
     // Set up button event handling through ButtonLogic architecture
-    buttonManager.setEventCallback([&buttonLogic, &dualButtonDetector](ButtonManager::ButtonEvent event) {
+    // Note: Static locals don't need to be captured
+    buttonManager.setEventCallback([](ButtonManager::ButtonEvent event) {
         // First, pass all button events to dual-button detector for root takeover detection
         dualButtonDetector.processButtonEvent(event);
         
@@ -172,7 +178,7 @@ extern "C" void app_main(void) {
     }
     
     // Set up dual-button callbacks
-    dualButtonDetector.setDualButtonCallback([&rootTakeoverManager](DualButtonDetector::DualButtonEvent event) {
+    dualButtonDetector.setDualButtonCallback([](DualButtonDetector::DualButtonEvent event) {
         switch (event) {
             case DualButtonDetector::DUAL_PRESS_DETECTED:
                 ESP_LOGI(MAIN_TAG, "🎯 DUAL BUTTON PRESS DETECTED - Preparing root takeover...");
@@ -209,7 +215,7 @@ extern "C" void app_main(void) {
     });
     
     // Set up visual feedback callback for LED feedback during takeover
-    rootTakeoverManager.setVisualFeedbackCallback([&buttonFeedback](RootTakeoverManager::TakeoverState state) {
+    rootTakeoverManager.setVisualFeedbackCallback([](RootTakeoverManager::TakeoverState state) {
         ESP_LOGD(MAIN_TAG, "Visual feedback for takeover state: %d", (int)state);
         
         // Use ButtonFeedbackController for local-only feedback
@@ -234,14 +240,10 @@ extern "C" void app_main(void) {
         }
     });
     
-    if (buttonManager.init() != ESP_OK) {
-        ESP_LOGE(MAIN_TAG, "⚠️ Failed to initialize button interface - continuing with BLE-only control");
-        // System continues without buttons - graceful degradation
-    } else {
-        ESP_LOGI(MAIN_TAG, "✅ Button interface ready - GPIO %d (sequence), GPIO %d (random)", 
-                CONFIG_BUTTON_1_GPIO, CONFIG_BUTTON_2_GPIO);
-        ESP_LOGI(MAIN_TAG, "🎯 Dual-button root takeover enabled - Hold both buttons 2s for mesh control");
-    }
+    ESP_LOGI(MAIN_TAG, "✅ Button interface ready - GPIO %d (sequence), GPIO %d (random)", 
+            CONFIG_BUTTON_1_GPIO, CONFIG_BUTTON_2_GPIO);
+    ESP_LOGI(MAIN_TAG, "🎯 Dual-button root takeover enabled - Hold both buttons 2s for mesh control");
+
 #else
     ESP_LOGI(MAIN_TAG, "Button interface disabled - BLE-only control mode");
 #endif
@@ -261,8 +263,17 @@ extern "C" void app_main(void) {
     });
     
     // Set up mesh coordinator callbacks - now generic
-    meshCoordinator.setPacketCallback([&ledProcessor](const GenericPacket& packet) {
+    meshCoordinator.setPacketCallback([&ledProcessor, &ledController, &meshCoordinator](const GenericPacket& packet) {
+        // Skip processing if we're the autonomous root (button-controlled) - we generate patterns, not receive them
+        if (meshCoordinator.getCurrentRole() == NodeRole::MESH_ROOT_AUTONOMOUS) {
+            ESP_LOGD(MAIN_TAG, "Ignoring LED pattern - autonomous root generates patterns, doesn't receive them");
+            return;
+        }
+
         ESP_LOGI(MAIN_TAG, "Received LED pattern from mesh: %zu bytes", packet.getLength());
+
+        // Track pattern reception time for return-to-idle behavior (root election redesign)
+        ledController.onPatternReceived();
 
         // Process LED pattern (handles current format and future formats automatically)
         if (!ledProcessor.processPacket(packet)) {
@@ -323,12 +334,21 @@ extern "C" void app_main(void) {
             ESP_LOGI(MAIN_TAG, "🔥 BLE connection processing complete - new role: %s",
                      meshCoordinator.getRoleString());
         } else {
-            ESP_LOGI(MAIN_TAG, "🔥 Mobile phone disconnected - stepping down from root role (Node 0x%04X)",
+            ESP_LOGI(MAIN_TAG, "Mobile phone disconnected - stepping down from root role (Node 0x%04X)",
                      meshCoordinator.getNodeId());
             meshCoordinator.onBleDisconnected();
-            ESP_LOGI(MAIN_TAG, "🔥 BLE disconnection processing complete - new role: %s",
+            ESP_LOGI(MAIN_TAG, "BLE disconnection processing complete - new role: %s",
                      meshCoordinator.getRoleString());
         }
+    });
+
+    // Set up BLE displacement callback for dual-BLE scenario (root election redesign)
+    meshCoordinator.setBleDisplacementCallback([&pixel_packet_profile]() {
+        ESP_LOGW(MAIN_TAG, "BLE displacement triggered - sending notification and disconnecting");
+        // Send notification to phone before disconnecting
+        pixel_packet_profile->sendRootTransferredNotification();
+        vTaskDelay(pdMS_TO_TICKS(100)); // Brief delay for notification to send
+        pixel_packet_profile->forceDisconnect();
     });
 
     // Set up packet forwarding from BLE to mesh - now generic
@@ -396,89 +416,56 @@ extern "C" void app_main(void) {
         dualButtonDetector.update();
         rootTakeoverManager.update();
 #endif
-        
-        // Check election timeout for advanced election system (optimized: every 100ms vs 15ms)
-        static uint32_t lastElectionTimeoutCheck = 0;
-        if (now - lastElectionTimeoutCheck >= 100) { // Check every 100ms instead of 15ms
-            meshCoordinator.checkElectionTimeout();
-            lastElectionTimeoutCheck = now;
-        }
 
         // Root nodes send periodic announcements (every 5 seconds)
         // - BLE roots: Ensure autonomous roots know about superior BLE root and step down
         // - Autonomous roots: Maintain root authority in absence of BLE root
-        static uint32_t lastRootAnnouncement = 0;
-        if (meshCoordinator.isRootNode() && (now - lastRootAnnouncement > 5000)) {
-            meshCoordinator.sendRootAnnouncement();
-            lastRootAnnouncement = now;
-        }
 
-        // Update adaptive mesh components for neighbor discovery and topology management
-        static uint32_t lastAdaptiveMeshUpdate = 0;
-        if (now - lastAdaptiveMeshUpdate >= 1000) { // Update every 1 second for responsive neighbor discovery
-            static uint32_t updateCount = 0;
-            if (++updateCount % 10 == 1) { // Log every 10th call (every 10 seconds) to avoid spam
-                ESP_LOGI(MAIN_TAG, "🔄 Main loop calling updateAdaptiveMesh() (#%u)", updateCount);
-            }
-            meshCoordinator.updateAdaptiveMesh();
-            lastAdaptiveMeshUpdate = now;
-        }
-        
-        // Monitor stack usage every 60 seconds for ESP32-C3 safety
-        static uint32_t lastStackCheck = 0;
-        if (now - lastStackCheck > 60000) {
-            UBaseType_t stack_free = uxTaskGetStackHighWaterMark(NULL);
-            if (stack_free < 1024) { // Less than 1KB free
-                ESP_LOGW(MAIN_TAG, "⚠️ LOW STACK WARNING: Only %u bytes free", 
-                         stack_free * sizeof(StackType_t));
-            }
-            lastStackCheck = now;
-        }
-        
-        // Update and report network health every 60 seconds (reduced frequency)
+        // Update and report network health every 10 seconds
         static uint32_t lastHealthUpdate = 0;
-        if (now - lastHealthUpdate > 60000) {
+        if (now - lastHealthUpdate > 10000) {
             const auto& stats = meshCoordinator.getNetworkStats();
             size_t active_neighbors = meshCoordinator.getActiveNeighborCount();
-
-            // Convert mesh stats to simple format and update network health
-            MeshStats meshStats = {
-                .packets_sent = stats.packets_sent,
-                .packets_received = stats.packets_received,
-                .packets_dropped = stats.packets_dropped,
-                .send_failures = stats.send_failures
-            };
             int8_t avg_rssi = meshCoordinator.getAverageNeighborRSSI();
 
-            networkHealthMonitor.updateMetrics(meshStats, active_neighbors, avg_rssi,
-                                              meshCoordinator.isRootNode() ? (meshCoordinator.isBleConnected() ? 1 : 2) : 0,
-                                              meshCoordinator.getReachableNodeCount());
+            // Convert NodeRole to uint8_t for NetworkHealthMonitor
+            uint8_t role = 0;
+            if (meshCoordinator.getCurrentRole() == NodeRole::MESH_ROOT_ACTIVE) {
+                role = 1; // BLE root
+            } else if (meshCoordinator.getCurrentRole() == NodeRole::MESH_ROOT_AUTONOMOUS) {
+                role = 2; // Autonomous root
+            }
 
-            const NetworkHealth& health = networkHealthMonitor.getCurrentHealth();
+            // Update NetworkHealthMonitor with mesh stats
+            MeshStats mesh_stats;
+            mesh_stats.packets_sent = stats.packets_sent;
+            mesh_stats.packets_received = stats.packets_received;
+            mesh_stats.packets_dropped = stats.packets_dropped;
+            mesh_stats.send_failures = stats.send_failures;
 
-            // Send network health via BLE characteristic for Flutter app
-            health_profile->sendHealthUpdate();
+            // Calculate total nodes: use root's count if available, otherwise 1 + neighbors
+            uint8_t total_nodes = (uint8_t)stats.total_nodes;
+            if (total_nodes == 0) {
+                // Fallback: at minimum we have ourselves + our visible neighbors
+                total_nodes = 1 + (uint8_t)active_neighbors;
+            }
 
-            // Single concise status line with network health
-            ESP_LOGI(MAIN_TAG, "Node 0x%04X | %s | LED:%s | Health:%u%% (%u neighbors, %u%% success)",
+            healthMonitor.updateMetrics(mesh_stats,
+                                       (uint8_t)active_neighbors,
+                                       avg_rssi,
+                                       role,
+                                       total_nodes);
+
+            // Log network health status
+            ESP_LOGI(MAIN_TAG, "Node 0x%04X | %s | LED:%s | PktRcvd:%lu, PktSent:%lu, Failures:%lu, Nbrs:%zu",
                      meshCoordinator.getNodeId(),
                      meshCoordinator.getRoleString(),
                      ledController.getCurrentSequenceType(),
-                     health.overall_score,
-                     health.active_neighbors,
-                     health.packet_success_rate);
-            
-            // Show detailed health in logs for debugging
-            const char* health_level = "UNKNOWN";
-            switch (networkHealthMonitor.getHealthLevel()) {
-                case NETWORK_EXCELLENT: health_level = "EXCELLENT"; break;
-                case NETWORK_GOOD: health_level = "GOOD"; break; 
-                case NETWORK_POOR: health_level = "POOR"; break;
-                case NETWORK_CRITICAL: health_level = "CRITICAL"; break;
-            }
-            ESP_LOGD(MAIN_TAG, "📊 Network Health Details: Level=%s, RSSI=%ddBm, Uptime=%uh", 
-                     health_level, health.avg_signal_strength, health.uptime_hours);
-            
+                     stats.packets_received,
+                     stats.packets_sent,
+                     stats.send_failures,
+                     active_neighbors);
+
             lastHealthUpdate = now;
         }
         
@@ -500,31 +487,7 @@ extern "C" void app_main(void) {
             }
             lastStackMonitor = now;
         }
-        
-        // Optional: Enable detailed mesh debugging (disabled in production)
-        // Debug mesh neighbor discovery every 30 seconds
-        static uint32_t lastNeighborDebug = 0;
-        if (meshCoordinator.isAdaptiveMeshEnabled() && (now - lastNeighborDebug > 30000)) { // Every 30 seconds
-            size_t neighborCount = meshCoordinator.getActiveNeighborCount();
-            ESP_LOGI(MAIN_TAG, "🔍 NEIGHBOR DEBUG - Active neighbors: %zu, Adaptive mesh enabled: %s",
-                     neighborCount, meshCoordinator.isAdaptiveMeshEnabled() ? "YES" : "NO");
 
-            // Print current network health data
-            NetworkHealth health = networkHealthMonitor.getCurrentHealth();
-            ESP_LOGI(MAIN_TAG, "📊 HEALTH DEBUG - Score: %d%%, Neighbors: %d, Success: %d%%, Role: %d",
-                     health.overall_score, health.active_neighbors, health.packet_success_rate, health.mesh_role);
-
-            lastNeighborDebug = now;
-        }
-
-        #ifdef CONFIG_LOG_MAXIMUM_LEVEL_DEBUG
-        static uint32_t lastDetailedStatus = 0;
-        if (meshCoordinator.isAdaptiveMeshEnabled() && (now - lastDetailedStatus > 300000)) { // Every 5 minutes
-            meshCoordinator.printAdaptiveMeshStatus();
-            lastDetailedStatus = now;
-        }
-        #endif
-        
         vTaskDelay(pdMS_TO_TICKS(15)); // 15ms delay for smooth LED updates while reducing ESP-NOW/BLE interference
     }
 

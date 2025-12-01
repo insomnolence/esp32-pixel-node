@@ -3,14 +3,19 @@
 
 const char* BLEGapHandler::TAG = "BLEGapHandler";
 
-BLEGapHandler::BLEGapHandler() {
+BLEGapHandler::BLEGapHandler(BleHardwareInterface* hardware)
+    : hardware_(hardware) {
 }
 
 BLEGapHandler::~BLEGapHandler() {
 }
 
 esp_err_t BLEGapHandler::registerGapCallbacks() {
-    esp_err_t ret = esp_ble_gap_register_callback(BLEGapHandler::gapEventHandler);
+    if (!hardware_) {
+        ESP_LOGE(TAG, "Hardware interface is null");
+        return ESP_ERR_INVALID_ARG;
+    }
+    esp_err_t ret = hardware_->registerGapCallback(BLEGapHandler::gapEventHandler);
     if (ret) {
         ESP_LOGE(TAG, "gap register error, error code = %x", ret);
         return ret;

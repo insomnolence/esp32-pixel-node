@@ -5,6 +5,7 @@ idf_component_register(
         "src/gatt_profile.cpp"
         "src/network_health_profile.cpp"
         "src/pixel_packet_profile.cpp"
+        "src/esp_idf_ble_hardware.cpp"
     INCLUDE_DIRS "include"
     REQUIRES packet system_support bt freertos log
 )

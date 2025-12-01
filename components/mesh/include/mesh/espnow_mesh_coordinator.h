@@ -15,15 +15,13 @@
 #include <set>
 #include <vector>
 #include <ctime>
+#include <map>
 
-// Forward declarations for adaptive mesh components
-class NeighborManager;
-class TopologyManager; 
-class AdaptiveRouter;
+#include "mesh/mesh_protocol.h"
+#include "mesh/mesh_hardware_interface.h"
 
-#define ESPNOW_MESH_MAX_PAYLOAD_LEN 200
-#define ESPNOW_MESH_DEFAULT_TTL 4
-#define ESPNOW_MESH_CHANNEL 6
+// Forward declarations
+class NeighborTracker;
 
 enum class NodeRole {
     MESH_CLIENT,             // Normal mesh node
@@ -31,49 +29,38 @@ enum class NodeRole {
     MESH_ROOT_AUTONOMOUS     // Autonomous root without BLE
 };
 
-enum class MeshPacketType : uint8_t {
-    LED_PATTERN = 0x01,      // LED pattern/color updates (high priority)
-    NODE_STATUS = 0x02,      // Node health/status (low priority)
-    NETWORK_BEACON = 0x03,   // Network discovery/maintenance
-    ROOT_ELECTION = 0x04,    // Autonomous root election (legacy)
-    ROOT_ANNOUNCEMENT = 0x05,// Root node announcement
-    ELECTION_DISCOVERY = 0x06,   // New election system: Discovery phase
-    ELECTION_CANDIDATE = 0x07,   // New election system: Candidate announcement  
-    ELECTION_VOTE = 0x08,        // New election system: Vote casting
-    ELECTION_RESULT = 0x09,      // New election system: Result announcement
-    
-    // Adaptive Mesh Packet Types (0x10-0x1F range)
-    ADAPTIVE_NEIGHBOR_DISCOVERY = 0x10, // Neighbor discovery beacon with RSSI
-    ADAPTIVE_TOPOLOGY_UPDATE = 0x11,    // Network topology information sharing
-    ADAPTIVE_ROUTE_REQUEST = 0x12,      // Multi-path route discovery
-    ADAPTIVE_ROUTE_REPLY = 0x13,        // Route discovery response
-    ADAPTIVE_DATA_FORWARD = 0x14        // Smart packet forwarding with routing
+// Global structs for NetworkStats and NodeInfo
+struct NetworkStats {
+    uint32_t packets_sent = 0;
+    uint32_t packets_received = 0;
+    uint32_t packets_dropped = 0;
+    uint32_t send_failures = 0;
+    uint32_t last_activity_ms = 0;
+
+    // Simplified stats for root reporting
+    uint32_t total_nodes = 0;
+    int8_t avg_network_rssi = 0;
 };
 
-enum class ElectionState : uint8_t {
-    ELECTION_IDLE = 0,       // Not participating in election
-    ELECTION_DISCOVERY,      // Listening for other candidates (3-7s)
-    ELECTION_CANDIDATE,      // Announcing candidacy (2-4s)
-    ELECTION_VOTING,         // Evaluating candidates and voting (2-3s)
-    ELECTION_CONFIRMED       // Election complete, transitioning to final role
+struct NodeInfo {
+    uint8_t node_id[6];
+    uint8_t neighbor_count;
+    int8_t rssi; // Average RSSI to neighbors of that node
+    uint32_t last_seen; // Timestamp in ms
 };
-
-struct ESPNowMeshPacket {
-    uint32_t packet_id;          // Unique packet identifier (prevents loops)
-    uint8_t packet_type;         // MeshPacketType
-    uint8_t ttl;                 // Time-to-live (hop count)
-    uint8_t source_mac[6];       // Original sender MAC
-    uint32_t timestamp;          // Send timestamp for sync
-    uint16_t data_len;           // Actual payload size
-    uint32_t crc32;              // CRC32 checksum for packet integrity
-    uint8_t data[ESPNOW_MESH_MAX_PAYLOAD_LEN - 24]; // Reserve space for header + CRC32
-} __attribute__((packed));
 
 class BoundedPacketTracker {
 public:
     BoundedPacketTracker();
     ~BoundedPacketTracker();
-    bool isPacketSeen(uint32_t packet_id);
+
+    // Returns true if this is a NEW packet (not seen before), false if duplicate.
+    // Automatically marks the packet as seen on first encounter.
+    bool isNewPacket(uint32_t packet_id);
+
+    // Mark a packet as seen without checking (used when sending our own packets)
+    void markPacketSeen(uint32_t packet_id);
+
     void cleanup();
 
 private:
@@ -84,12 +71,12 @@ private:
     size_t history_index;
     size_t history_count;
     uint32_t last_cleanup;
-    SemaphoreHandle_t tracker_mutex; // Mutex for thread-safe access
+    SemaphoreHandle_t tracker_mutex; 
 };
 
 class ESPNowMeshCoordinator {
 public:
-    ESPNowMeshCoordinator();
+    ESPNowMeshCoordinator(MeshHardwareInterface* hardware);
     ~ESPNowMeshCoordinator();
 
     esp_err_t init();
@@ -101,15 +88,15 @@ public:
     bool isRootNode() const;
     bool isBleConnected() const { return ble_connected; }
     
-    // BLE integration - maintains same interface as old MeshCoordinator
+    // BLE integration
     void onBleConnected();
     void onBleDisconnected();
     
-    // Mesh communication - optimized for LED patterns
+    // Mesh communication
     esp_err_t sendGenericPacket(const GenericPacket& packet);
     esp_err_t sendLEDPattern(const GenericPacket& pattern);
     
-    // Callbacks - same interface as old MeshCoordinator
+    // Callbacks
     void setPacketCallback(std::function<void(const GenericPacket&)> callback);
     void setRoleChangeCallback(std::function<void(NodeRole, NodeRole)> callback);
     
@@ -117,80 +104,47 @@ public:
     uint16_t getNodeId() const;
     const char* getRoleString() const;
     
-    // Autonomous root election
-    void startRootElection();
-    bool isAutonomousRoot() const;
+    // Autonomous root election (Simplified)
     void checkForRootElection();
-    void sendRootAnnouncement();
     
-    // Root stepDown functionality
-    void stepDownIfNeeded();
-    
-    // BLE connection priority comparison
-    uint32_t getBleConnectionAge() const;
-    
-    // BLE stabilization - prevent connections immediately after autonomous election
+    // Legacy support (to be removed/refactored)
     bool shouldAcceptBleConnection() const;
     
-    // Advanced election system
-    void startAdvancedElection();
-    void startForcedTakeover(); // Start election with priority boost for manual override
-    void processElectionPacket(const ESPNowMeshPacket& packet);
-    uint32_t calculateNodePriority() const;
-    void checkElectionTimeout();
-    void endElection(); // Clean up election state and clear forced takeover flag
-    
-    // Adaptive mesh control (parallel implementation)
-    esp_err_t enableAdaptiveMesh();
-    void disableAdaptiveMesh();
-    bool isAdaptiveMeshEnabled() const;
-    void updateAdaptiveMesh();
-    
-    // Memory and performance monitoring
+    // Network health monitoring
+    const NetworkStats& getNetworkStats() const;
+
+    // Node info management
+    void cleanupNodeInfo();
+    void updateNodeInfo(const HeartbeatPacket& hb);
+
+    // Neighbor Management (Simplified)
     size_t getActiveNeighborCount() const;
     size_t getReachableNodeCount() const;
     int8_t getAverageNeighborRSSI() const;
-    
-    // Adaptive mesh status and monitoring
-    void printAdaptiveMeshStatus() const;
-    
-    // Testing and simulation (for single-device validation)
-    void simulateNeighborDiscovery(uint16_t simulated_node_id, int8_t rssi);
-    
-    // Network health monitoring
-    struct NetworkStats {
-        uint32_t packets_sent = 0;
-        uint32_t packets_received = 0;
-        uint32_t packets_dropped = 0;
-        uint32_t send_failures = 0;
-        uint32_t last_activity_ms = 0;
-    };
-    
-    const NetworkStats& getNetworkStats() const;
 
-    // Election candidate information
-    struct ElectionCandidate {
-        uint16_t node_id;
-        uint32_t priority_score;
-        uint32_t uptime_ms;
-        uint8_t mac_addr[6];
-        uint32_t timestamp_received;
-        
-        bool operator<(const ElectionCandidate& other) const {
-            // Higher priority score wins, use node_id as tiebreaker
-            if (priority_score != other.priority_score) {
-                return priority_score > other.priority_score;
-            }
-            return node_id < other.node_id;  // Lower node_id wins ties
-        }
-    };
+    // Election helpers
+    void broadcastRootClaim(RootClaimReason reason);
+    bool shouldYieldTo(const RootClaimPacket& claim);
+    void updateCurrentRoot(const uint8_t* root_mac);
 
-    // 🛡️ CRC32 Packet Integrity Protection
-    static uint32_t calculatePacketCRC32(const ESPNowMeshPacket* packet);
-    static bool validatePacketCRC32(const ESPNowMeshPacket* packet);
-    
-    // BLE Root Detection
-    bool hasActiveBleRoot() const;
+    // Network-wide BLE status (for root election redesign)
+    bool networkHasBleRoot() const;
+    bool hasActiveRoot() const;
+
+    // BLE displacement handling (dual BLE scenario)
+    void setBleDisplacementCallback(std::function<void()> callback);
+
+    // Network management
+    esp_err_t initWiFi();
+    esp_err_t initESPNow();
+    esp_err_t transitionToRole(NodeRole new_role);
+    void randomBackoff();
+
+    // Heartbeat
+    void sendHeartbeat();
+
+    // Helper to send using legacy structure (temporary)
+    esp_err_t sendMeshPacket(const ESPNowMeshPacket& packet);
 
 private:
     static const char* TAG;
@@ -200,6 +154,7 @@ private:
     NodeRole current_role;
     uint16_t node_id;
     bool ble_connected;
+    RootClaimReason current_claim_reason; // Track why we are root
     uint32_t packet_counter;
     uint8_t local_mac[6];
     
@@ -211,83 +166,46 @@ private:
     uint32_t election_timer;
     uint32_t last_root_announcement;
     bool heard_from_root;
-    bool last_announcement_was_ble_root;
     
-    // BLE connection timestamp tracking for priority comparison
-    uint32_t ble_connection_uptime_ms;  // When BLE connected (our uptime)
-    bool has_ble_connection_timestamp;  // Validity flag for timestamp
-    
-    // Advanced election system state
-    ElectionState election_state;
-    uint32_t election_start_time;
-    uint32_t election_phase_timeout;
-    bool is_forced_takeover; // Flag for dual-button manual takeover priority boost
-    static const size_t MAX_ELECTION_CANDIDATES = 16; // Bounded election candidates
-    ElectionCandidate election_candidates[MAX_ELECTION_CANDIDATES];
-    size_t election_candidate_count;
-    uint16_t elected_root_node_id;
-    uint32_t last_election_attempt;
-    uint32_t autonomous_root_timestamp;  // Track when we became autonomous root for BLE stabilization
+    // Timestamps
+    uint32_t ble_connection_uptime_ms;
+    bool has_ble_connection_timestamp;
+    uint32_t autonomous_root_timestamp;
+    uint8_t current_root_mac[6]; // To store the MAC of the current root
 
-    // Non-blocking discovery wait state
-    bool discovery_wait_active;          // True when waiting for discovery responses
-    uint32_t discovery_wait_start_time;  // Timestamp when discovery wait started
-    
+    // Network-wide BLE tracking (root election redesign)
+    bool network_has_ble_root;      // True if ANY node reports BLE connection
+    uint8_t ble_root_mac[6];        // MAC of the node with BLE (if any)
+    uint32_t last_ble_root_seen;    // Timestamp of last BLE heartbeat
+    uint32_t displaced_until;       // Cooldown timestamp after being displaced by another BLE
+
     std::function<void(const GenericPacket&)> packet_callback;
     std::function<void(NodeRole, NodeRole)> role_change_callback;
+    std::function<void()> ble_displacement_callback;
     
-    // Adaptive mesh components (parallel implementation)
-    std::unique_ptr<NeighborManager> neighbor_manager;
-    std::unique_ptr<TopologyManager> topology_manager;
-    std::unique_ptr<AdaptiveRouter> adaptive_router;
-    bool adaptive_mesh_enabled;
+    // Neighbor Tracker (Simplified)
+    std::unique_ptr<NeighborTracker> neighbor_tracker;
+
+    // Network stats for Root
+    std::map<uint64_t, NodeInfo> known_nodes_info;
+    uint32_t last_node_cleanup;
+    static constexpr uint32_t NODE_TIMEOUT_MS = 30000; // 3 missed heartbeats
     
-    // ESP-NOW callbacks
-    static void onESPNowSent(const wifi_tx_info_t *tx_info, esp_now_send_status_t status);
-    static void onESPNowReceived(const esp_now_recv_info_t *recv_info, const uint8_t *data, int len);
+    // Heartbeat timing
+    uint32_t last_heartbeat_sent;
+    uint32_t heartbeat_interval_ms; // Default 10 seconds
+
+    // Hardware Interface callbacks
+    static void onESPNowReceivedWrapper(const uint8_t *mac_addr, const uint8_t *data, int len, int8_t rssi);
     
     // Internal packet handling
-    void handleReceivedPacket(const uint8_t *mac_addr, const uint8_t *data, int len);
-    void forwardPacket(const ESPNowMeshPacket& packet);
-    esp_err_t sendMeshPacket(const ESPNowMeshPacket& packet);
-    esp_err_t sendMeshPacketWithRetry(const ESPNowMeshPacket& packet, int max_retries);
-    esp_err_t sendMeshPacketHighPriority(const ESPNowMeshPacket& packet); // Fast path for time-sensitive data
-    
-    // Adaptive mesh unicast transmission
-    esp_err_t sendMeshPacketToNode(const ESPNowMeshPacket& packet, uint16_t target_node_id);
-    esp_err_t sendMeshPacketToAllNeighbors(const ESPNowMeshPacket& packet);
-    
-    // Packet creation
-    ESPNowMeshPacket createMeshPacket(MeshPacketType type, const GenericPacket& payload, uint8_t ttl = ESPNOW_MESH_DEFAULT_TTL);
+    void handleReceivedPacket(const uint8_t *mac_addr, const uint8_t *data, int len, int8_t rssi);
+    void forwardPacket(const void* packet, size_t len);
+    esp_err_t broadcastPacket(const void* data, size_t len);
     uint32_t generatePacketId();
-    
-    // Network management
-    esp_err_t initWiFi();
-    esp_err_t initESPNow();
-    esp_err_t transitionToRole(NodeRole new_role);
-    
-    // Random backoff to prevent collisions
-    void randomBackoff();
-    
-    // Autonomous root election methods
-    void becomeAutonomousRoot();
-    esp_err_t sendElectionPacket();
-    
-    // Advanced election helper methods
-    void sendElectionDiscoveryPacket();
-    void sendElectionCandidatePacket();
-    void sendElectionVotePacket();
-    void sendElectionResultPacket();
-    void processElectionDiscovery(const ESPNowMeshPacket& packet);
-    void processElectionCandidate(const ESPNowMeshPacket& packet);
-    void processElectionVote(const ESPNowMeshPacket& packet);
-    void processElectionResult(const ESPNowMeshPacket& packet);
-    void advanceElectionPhase();
-    ElectionCandidate selectBestCandidate() const;
-    
-    // Adaptive mesh packet processing methods
-    void processAdaptiveNeighborDiscovery(const ESPNowMeshPacket& packet);
-    void processAdaptiveTopologyUpdate(const ESPNowMeshPacket& packet);
-    void processAdaptiveRouting(const ESPNowMeshPacket& packet);
-    void processAdaptiveDataForward(const ESPNowMeshPacket& packet);
+
+    // BLE displacement handling (internal)
+    void handleBleDisplacement(const RootClaimPacket& claim);
+
+    MeshHardwareInterface* hardware;
 };

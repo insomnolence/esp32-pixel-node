@@ -14,13 +14,14 @@ static const char* TAG = "Player";
     #define HARDWARE_MAX_BRIGHTNESS_ESP32C3 100
 #endif
 
-Player::Player() 
-    : sequence(nullptr), 
-      step(0), 
-      stepTime(0), 
-      pattern(nullptr), 
+Player::Player()
+    : sequence(nullptr),
+      step(0),
+      stepTime(0),
+      pattern(nullptr),
       patternId(0),
-      lastUpdate(0), 
+      lastPatternCheck(0),
+      lastStripUpdate(0),
       lastCycle(0),
       speed(35) {
     updateMutex = xSemaphoreCreateMutex();
@@ -52,18 +53,40 @@ void Player::SetSequence(Sequence *_sequence) {
 
 void Player::AdvanceSequence() {
     if (!sequence) return;
-    
+
     if (xSemaphoreTake(updateMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         ESP_LOGI(TAG, "Advancing sequence manually");
         step = sequence->Advance(step, false);
         stepTime = esp_timer_get_time() / 1000;
-        
+
         // Force pattern update with smart pointer
         pattern.reset();
+
+        // Notify callback of step change (for mesh broadcast)
+        notifyStepChange();
+
         xSemaphoreGive(updateMutex);
     } else {
         ESP_LOGW(TAG, "Failed to acquire mutex for AdvanceSequence");
     }
+}
+
+void Player::notifyStepChange() {
+    if (!stepChangeCallback || !sequence) return;
+
+    Packet packet;
+    packet.command = sequence->GetCommand(step);
+    packet.brightness = sequence->GetBrightness(step);
+    packet.speed = sequence->GetSpeed(step);
+    packet.pattern = sequence->GetPatternId(step);
+
+    for (int i = 0; i < 3; i++) {
+        packet.color[i] = sequence->GetColors(step, i);
+        packet.level[i] = sequence->GetLevels(step, i);
+    }
+
+    ESP_LOGI(TAG, "Step changed to %d, notifying callback (pattern=%d)", step, packet.pattern);
+    stepChangeCallback(packet);
 }
 
 bool Player::GetCommand(Packet *command) const {
@@ -85,11 +108,16 @@ bool Player::GetCommand(Packet *command) const {
     return true;
 }
 
-bool Player::UpdatePattern(led_time_t now, LEDStrip *strip) {
+bool Player::UpdatePattern(led_time_t now, ILedStrip *strip) {
+    // Only check for pattern updates periodically to save CPU
+    // But check frequently enough for responsiveness
+    if (now - lastPatternCheck < 10) return false;
+    lastPatternCheck = now;
+
     if (!sequence || !strip) {
         return false;
     }
-    
+
     if (xSemaphoreTake(updateMutex, pdMS_TO_TICKS(50)) != pdTRUE) {
         // Don't block too long - skip this update if mutex unavailable
         ESP_LOGW(TAG, "Mutex timeout in UpdatePattern - skipping frame");
@@ -100,14 +128,20 @@ bool Player::UpdatePattern(led_time_t now, LEDStrip *strip) {
     
     // Check if we need to advance to next step based on duration
     uint32_t stepDuration = sequence->GetDuration(step);
-    if (stepDuration > 0 && (now - stepTime) >= stepDuration) {
-        ESP_LOGI(TAG, "Step duration expired, advancing sequence");
+    uint32_t elapsed = now - stepTime;
+    if (stepDuration > 0 && elapsed >= stepDuration) {
+        int oldStep = step;
         step = sequence->Advance(step, true); // timed advance
+        ESP_LOGI(TAG, "Step %d->%d: duration=%ums, elapsed=%ums, now=%u, stepTime=%u",
+                 oldStep, step, stepDuration, elapsed, (unsigned)now, (unsigned)stepTime);
         stepTime = now;
         patternChanged = true;
-        
+
         // Clean up old pattern to force recreation
         pattern.reset();
+
+        // Notify callback of step change (for mesh broadcast)
+        notifyStepChange();
     }
     
     // Create pattern if needed (Arduino-style: check pattern ID AND colors AND levels)
@@ -155,9 +189,15 @@ bool Player::UpdatePattern(led_time_t now, LEDStrip *strip) {
 #ifdef CONFIG_IDF_TARGET_ESP32C3
             if (brightness > HARDWARE_MAX_BRIGHTNESS_ESP32C3) {
                 safe_brightness = HARDWARE_MAX_BRIGHTNESS_ESP32C3;
-                ESP_LOGW(TAG, "⚡ TEMP LIMIT: Brightness %d capped to %d for ESP32C3 power safety", 
-                         brightness, safe_brightness);
-                ESP_LOGW(TAG, "TODO: Review power system and component selection for higher brightness capability");
+                
+                static uint32_t last_warning_time_init = 0;
+                uint32_t current_time = esp_timer_get_time() / 1000;
+                if (current_time - last_warning_time_init > 5000) {
+                    ESP_LOGW(TAG, "⚡ TEMP LIMIT: Brightness %d capped to %d for ESP32C3 power safety", 
+                             brightness, safe_brightness);
+                    ESP_LOGW(TAG, "TODO: Review power system and component selection for higher brightness capability");
+                    last_warning_time_init = current_time;
+                }
             }
 #endif
             
@@ -177,9 +217,15 @@ bool Player::UpdatePattern(led_time_t now, LEDStrip *strip) {
 #ifdef CONFIG_IDF_TARGET_ESP32C3
     if (brightness > HARDWARE_MAX_BRIGHTNESS_ESP32C3) {
         safe_brightness = HARDWARE_MAX_BRIGHTNESS_ESP32C3;
-        ESP_LOGW(TAG, "⚡ TEMP LIMIT: Brightness %d capped to %d for ESP32C3 power safety", 
-                 brightness, safe_brightness);
-        ESP_LOGW(TAG, "TODO: Review power system and component selection for higher brightness capability");
+        
+        static uint32_t last_warning_time = 0;
+        uint32_t current_time = esp_timer_get_time() / 1000;
+        if (current_time - last_warning_time > 5000) { // Log at most every 5 seconds
+            ESP_LOGW(TAG, "⚡ TEMP LIMIT: Brightness %d capped to %d for ESP32C3 power safety", 
+                     brightness, safe_brightness);
+            ESP_LOGW(TAG, "TODO: Review power system and component selection for higher brightness capability");
+            last_warning_time = current_time;
+        }
     }
 #endif
     
@@ -189,13 +235,13 @@ bool Player::UpdatePattern(led_time_t now, LEDStrip *strip) {
     return patternChanged;
 }
 
-void Player::UpdateStrip(led_time_t now, LEDStrip *strip) {
+void Player::UpdateStrip(led_time_t now, ILedStrip *strip) {
     if (!pattern || !strip || !sequence) {
         return;
     }
-    
+
     // Update every 20ms for smooth animations (closer to Arduino's 16ms but still safe for ESP32)
-    if ((now - lastUpdate) >= 20) {
+    if ((now - lastStripUpdate) >= 20) {
         // Calculate proper timing offset like Arduino version
         led_time_t duration = pattern->GetDuration(strip);
         if (duration == 0) duration = 1000; // Default to 1 second if no duration
@@ -224,7 +270,7 @@ void Player::UpdateStrip(led_time_t now, LEDStrip *strip) {
         if (result != ESP_OK) {
             ESP_LOGW(TAG, "Failed to update LED strip: %s", esp_err_to_name(result));
         }
-        
-        lastUpdate = now;
+
+        lastStripUpdate = now;
     }
 }

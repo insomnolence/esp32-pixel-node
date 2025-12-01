@@ -3,29 +3,32 @@
 #include "esp_err.h"
 #include "driver/rmt_tx.h"
 #include "led/led_strip_encoder.h"
+#include "led/led_strip_interface.h"
 #include <stdint.h>
 
 // ESP32 LED strip driver - replaces Arduino Adafruit_NeoPixel
-class LEDStrip {
+class LEDStrip : public ILedStrip {
 public:
     LEDStrip(uint16_t pixels, uint8_t pin, uint8_t type = 0);
-    ~LEDStrip();
+    ~LEDStrip() override;
 
     // Core LED strip operations (compatible with Arduino Stripper interface)
-    esp_err_t begin();
-    esp_err_t show();
-    void setPixelColor(uint16_t pixel, uint32_t color);
-    void setPixelColor(uint16_t pixel, uint8_t r, uint8_t g, uint8_t b);
-    uint32_t getPixelColor(uint16_t pixel) const;
-    void setBrightness(uint8_t brightness);
-    uint8_t getBrightness() const;
-    void clear();
-    void clearAll(uint16_t totalPhysicalLEDs); // Clear entire physical strip
-    uint16_t numPixels() const;
+    esp_err_t begin() override;
+    esp_err_t show() override;
+    void setPixelColor(uint16_t pixel, uint32_t color) override;
+    void setPixelColor(uint16_t pixel, uint8_t r, uint8_t g, uint8_t b) override;
+    uint32_t getPixelColor(uint16_t pixel) const override;
+    void setBrightness(uint8_t brightness) override;
+    uint8_t getBrightness() const override;
+    void clear() override;
+    void clearAll(uint16_t totalPhysicalLEDs) override; // Clear entire physical strip
+    uint16_t numPixels() const override;
 
     // Convenience methods from Arduino Stripper class
-    void setAllColor(uint32_t color);
+    void setAllColor(uint32_t color) override;
     void setAllFade(uint8_t fade_value);
+
+    uint32_t getMillis() override;
 
     // Static color utility functions (from Arduino Stripper)
     static uint32_t ColorFade(uint32_t color, uint8_t fade_value);
@@ -64,5 +67,9 @@ const uint32_t WHITE    = 0xFFFFFF;
 
 // Generic fade utility (from Arduino)
 inline uint32_t fade(uint32_t low, uint32_t high, uint8_t value) {
-    return (high - low) * value / 255 + low;
+    // Original: unsigned math causes underflow when high < low
+    // return (high - low) * value / 255 + low;
+
+    // Fixed: cast BEFORE subtraction to handle high < low correctly
+    return ((int32_t)high - (int32_t)low) * value / 255 + low;
 }

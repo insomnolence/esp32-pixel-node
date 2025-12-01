@@ -5,11 +5,13 @@
 // LED timing type to avoid conflicts with system time_t
 typedef uint32_t led_time_t;
 
-#include "led/led_strip.h"
+#include "led/led_strip.h" // For static color helpers
+#include "led/led_strip_interface.h"
 #include "led/gradient.h"
 
 // Forward declarations
 class Gradient;
+class ILedStrip;
 
 class Pattern {
 public:
@@ -17,19 +19,19 @@ public:
     virtual ~Pattern() {}
     
     // Returns loop duration, time offset never goes above this
-    virtual led_time_t GetDuration(const LEDStrip *strip) const { return 40; }
+    virtual led_time_t GetDuration(const ILedStrip *strip) const { return 40; }
 
     // Assume nothing, setup all pixels
-    virtual void Init(LEDStrip *strip, const uint32_t *colors, const uint8_t *levels, led_time_t offset);
+    virtual void Init(ILedStrip *strip, const uint32_t *colors, const uint8_t *levels, led_time_t offset);
 
     // Assume nothing, setup all pixels
-    virtual void Init(LEDStrip *strip, led_time_t offset) { Loop(strip, offset); }
+    virtual void Init(ILedStrip *strip, led_time_t offset) { Loop(strip, offset); }
 
     // Restarting after a loop expired, but not first call 
-    virtual void Loop(LEDStrip *strip, led_time_t offset) { Update(strip, offset); }
+    virtual void Loop(ILedStrip *strip, led_time_t offset) { Update(strip, offset); }
 
     // Update pixels as needed
-    virtual void Update(LEDStrip *strip, led_time_t offset) { }
+    virtual void Update(ILedStrip *strip, led_time_t offset) { }
 
     // Returns color
     uint32_t color(int index) const {
@@ -53,35 +55,35 @@ Pattern *CreatePattern(uint8_t pattern);
 class FlashPattern : public Pattern {
 public:
     // Returns loop duration, time offset never goes above this
-    virtual led_time_t GetDuration(const LEDStrip *strip) const override;
+    virtual led_time_t GetDuration(const ILedStrip *strip) const override;
 
     // Update pixels as needed
-    virtual void Update(LEDStrip *strip, led_time_t offset) override;
+    virtual void Update(ILedStrip *strip, led_time_t offset) override;
 };
 
 // Rainbow!
 class RainbowPattern : public Pattern {
 public:
     // Returns loop duration, time offset never goes above this
-    virtual led_time_t GetDuration(const LEDStrip *strip) const override;
+    virtual led_time_t GetDuration(const ILedStrip *strip) const override;
 
     // Update pixels as needed
-    virtual void Update(LEDStrip *strip, led_time_t offset) override;
+    virtual void Update(ILedStrip *strip, led_time_t offset) override;
 };
 
 class SparklePattern : public Pattern {
 public:
     // Returns loop duration, time offset never goes above this
-    virtual led_time_t GetDuration(const LEDStrip *strip) const override;
+    virtual led_time_t GetDuration(const ILedStrip *strip) const override;
 
     // Update pixels as needed
-    virtual void Loop(LEDStrip *strip, led_time_t offset) override;
+    virtual void Loop(ILedStrip *strip, led_time_t offset) override;
 };
 
 class MiniSparklePattern : public SparklePattern {
 public:
     // Update pixels as needed
-    virtual void Update(LEDStrip *strip, led_time_t offset) override;
+    virtual void Update(ILedStrip *strip, led_time_t offset) override;
 };
 
 class MiniTwinklePattern : public Pattern {
@@ -89,13 +91,13 @@ public:
     MiniTwinklePattern();
     
     // Assume nothing, setup all pixels
-    virtual void Init(LEDStrip *strip, led_time_t offset) override;
+    virtual void Init(ILedStrip *strip, led_time_t offset) override;
 
     // Returns loop duration, time offset never goes above this
-    virtual led_time_t GetDuration(const LEDStrip *strip) const override;
+    virtual led_time_t GetDuration(const ILedStrip *strip) const override;
     
     // Update pixels as needed
-    virtual void Update(LEDStrip *strip, led_time_t offset) override;
+    virtual void Update(ILedStrip *strip, led_time_t offset) override;
 
 protected:
     led_time_t delta(led_time_t previous, led_time_t next, led_time_t duration);
@@ -107,19 +109,19 @@ protected:
 class MarchPattern : public Pattern {
 public:
     // Returns loop duration, time offset never goes above this
-    virtual led_time_t GetDuration(const LEDStrip *strip) const override;
+    virtual led_time_t GetDuration(const ILedStrip *strip) const override;
     
     // Update pixels as needed
-    virtual void Update(LEDStrip *strip, led_time_t offset) override;
+    virtual void Update(ILedStrip *strip, led_time_t offset) override;
 };
 
 class WipePattern : public Pattern {
 public:
     // Returns loop duration, time offset never goes above this
-    virtual led_time_t GetDuration(const LEDStrip *strip) const override;
+    virtual led_time_t GetDuration(const ILedStrip *strip) const override;
 
     // Update pixels as needed
-    virtual void Update(LEDStrip *strip, led_time_t offset) override;
+    virtual void Update(ILedStrip *strip, led_time_t offset) override;
 };
 
 class GradientPattern : public Pattern {
@@ -128,17 +130,17 @@ public:
     ~GradientPattern();
     
     // Returns loop duration, time offset never goes above this
-    virtual led_time_t GetDuration(const LEDStrip *strip) const override;
+    virtual led_time_t GetDuration(const ILedStrip *strip) const override;
 
     // Assume nothing, setup all pixels
-    virtual void Init(LEDStrip *strip, const uint32_t *colors, const uint8_t *levels, led_time_t offset) override;
-    virtual void Init(LEDStrip *strip, led_time_t offset) override;
+    virtual void Init(ILedStrip *strip, const uint32_t *colors, const uint8_t *levels, led_time_t offset) override;
+    virtual void Init(ILedStrip *strip, led_time_t offset) override;
 
     // Restarting after a loop expired, but not first call 
-    virtual void Loop(LEDStrip *strip, led_time_t offset) override;
+    virtual void Loop(ILedStrip *strip, led_time_t offset) override;
     
     // Update pixels as needed
-    virtual void Update(LEDStrip *strip, led_time_t offset) override;
+    virtual void Update(ILedStrip *strip, led_time_t offset) override;
         
 private:
     Gradient grad;
@@ -151,10 +153,10 @@ public:
     StrobePattern() : m_lastOffset(0) {}
     
     // Returns loop duration, time offset never goes above this
-    virtual led_time_t GetDuration(const LEDStrip *strip) const override;
+    virtual led_time_t GetDuration(const ILedStrip *strip) const override;
 
     // Update pixels as needed
-    virtual void Update(LEDStrip *strip, led_time_t offset) override;
+    virtual void Update(ILedStrip *strip, led_time_t offset) override;
 
     led_time_t m_lastOffset;
 };
@@ -162,28 +164,28 @@ public:
 class FixedPattern : public Pattern {
 public:
     // Returns loop duration, time offset never goes above this
-    virtual led_time_t GetDuration(const LEDStrip *strip) const override;
+    virtual led_time_t GetDuration(const ILedStrip *strip) const override;
 
     // Update pixels as needed
-    virtual void Update(LEDStrip *strip, led_time_t offset) override;
+    virtual void Update(ILedStrip *strip, led_time_t offset) override;
 };
 
 class CandyCanePattern : public Pattern {
 public:
     // Returns loop duration, time offset never goes above this
-    virtual led_time_t GetDuration(const LEDStrip *strip) const override;
+    virtual led_time_t GetDuration(const ILedStrip *strip) const override;
 
     // Update pixels as needed
-    virtual void Update(LEDStrip *strip, led_time_t offset) override;
+    virtual void Update(ILedStrip *strip, led_time_t offset) override;
 };
 
 class TestPattern : public Pattern {
 public:
     // Returns loop duration, time offset never goes above this
-    virtual led_time_t GetDuration(const LEDStrip *strip) const override;
+    virtual led_time_t GetDuration(const ILedStrip *strip) const override;
 
     // Update pixels as needed
-    virtual void Update(LEDStrip *strip, led_time_t offset) override;
+    virtual void Update(ILedStrip *strip, led_time_t offset) override;
 };
 
 class DiagnosticPattern : public Pattern {
@@ -191,7 +193,7 @@ public:
     DiagnosticPattern(int code = 0) : m_code(code) { }
 
     // Update pixels as needed
-    virtual void Update(LEDStrip *strip, led_time_t offset) override;
+    virtual void Update(ILedStrip *strip, led_time_t offset) override;
 
     int m_code;
 };

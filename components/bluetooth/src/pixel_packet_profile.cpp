@@ -212,17 +212,44 @@ void PixelPacketProfile::setPacketForwardCallback(std::function<void(const Gener
 
 void PixelPacketProfile::forceDisconnect() {
     if (!is_connected) {
-        ESP_LOGW(TAG, "🔒 Force disconnect called but no active connection");
+        ESP_LOGW(TAG, "Force disconnect called but no active connection");
         return;
     }
-    
-    ESP_LOGI(TAG, "🔒 Force disconnecting BLE connection (conn_id=%d)", current_conn_id);
-    
+
+    ESP_LOGI(TAG, "Force disconnecting BLE connection (conn_id=%d)", current_conn_id);
+
     // Use esp_ble_gatts_close to forcefully close the GATT connection
     esp_err_t ret = esp_ble_gatts_close(current_gatts_if, current_conn_id);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "🔒 Failed to force disconnect: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to force disconnect: %s", esp_err_to_name(ret));
     } else {
-        ESP_LOGI(TAG, "🔒 Force disconnect initiated successfully");
+        ESP_LOGI(TAG, "Force disconnect initiated successfully");
+    }
+}
+
+void PixelPacketProfile::sendRootTransferredNotification() {
+    if (!is_connected) {
+        ESP_LOGW(TAG, "Cannot send root transfer notification - not connected");
+        return;
+    }
+
+    // Notification packet: event type (0xFE) + reason (0x01 = root transferred)
+    uint8_t notification[2] = { 0xFE, 0x01 };
+
+    ESP_LOGI(TAG, "Sending root transfer notification to phone");
+
+    esp_err_t ret = esp_ble_gatts_send_indicate(
+        current_gatts_if,
+        current_conn_id,
+        char_handle,
+        sizeof(notification),
+        notification,
+        false  // false = notification (no confirmation needed)
+    );
+
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "Root transfer notification sent successfully");
+    } else {
+        ESP_LOGW(TAG, "Failed to send root transfer notification: %s", esp_err_to_name(ret));
     }
 }

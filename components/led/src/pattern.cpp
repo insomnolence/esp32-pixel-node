@@ -9,7 +9,7 @@ Pattern::Pattern() {
     memset(m_level, 0, sizeof(m_level));
 }
 
-void Pattern::Init(LEDStrip *strip, const uint32_t *colors, const uint8_t *levels, led_time_t offset) {
+void Pattern::Init(ILedStrip *strip, const uint32_t *colors, const uint8_t *levels, led_time_t offset) {
     // Store colors and levels
     memcpy(m_color, colors, sizeof(m_color));
     memcpy(m_level, levels, sizeof(m_level));
@@ -49,11 +49,11 @@ Pattern *CreatePattern(uint8_t pattern) {
 }
 
 // FlashPattern implementation
-led_time_t FlashPattern::GetDuration(const LEDStrip *strip) const {
+led_time_t FlashPattern::GetDuration(const ILedStrip *strip) const {
     return 4000; // 4 second cycle like Arduino
 }
 
-void FlashPattern::Update(LEDStrip *strip, led_time_t offset) {
+void FlashPattern::Update(ILedStrip *strip, led_time_t offset) {
     if (!strip) return;
     
     // Arduino-style flash pattern with complex timing and fading
@@ -75,11 +75,11 @@ void FlashPattern::Update(LEDStrip *strip, led_time_t offset) {
 }
 
 // RainbowPattern implementation
-led_time_t RainbowPattern::GetDuration(const LEDStrip *strip) const {
+led_time_t RainbowPattern::GetDuration(const ILedStrip *strip) const {
     return 2000; // 2 second cycle like Arduino
 }
 
-void RainbowPattern::Update(LEDStrip *strip, led_time_t offset) {
+void RainbowPattern::Update(ILedStrip *strip, led_time_t offset) {
     if (!strip || strip->numPixels() == 0) return;
     
     uint16_t numPixels = strip->numPixels();
@@ -95,11 +95,11 @@ void RainbowPattern::Update(LEDStrip *strip, led_time_t offset) {
 }
 
 // SparklePattern implementation  
-led_time_t SparklePattern::GetDuration(const LEDStrip *strip) const {
+led_time_t SparklePattern::GetDuration(const ILedStrip *strip) const {
     return 100; // 100ms cycle like Arduino
 }
 
-void SparklePattern::Loop(LEDStrip *strip, led_time_t offset) {  
+void SparklePattern::Loop(ILedStrip *strip, led_time_t offset) {  
     if (!strip || strip->numPixels() == 0) return;
     
     // Arduino-style sparkle with level-based count
@@ -121,7 +121,7 @@ void SparklePattern::Loop(LEDStrip *strip, led_time_t offset) {
 }
 
 // MiniSparklePattern implementation
-void MiniSparklePattern::Update(LEDStrip *strip, led_time_t offset) {
+void MiniSparklePattern::Update(ILedStrip *strip, led_time_t offset) {
     if (!strip || strip->numPixels() == 0) return;
     
     // Arduino-style mini sparkle: 25% duty cycle
@@ -132,11 +132,11 @@ void MiniSparklePattern::Update(LEDStrip *strip, led_time_t offset) {
 }
 
 // FixedPattern implementation
-led_time_t FixedPattern::GetDuration(const LEDStrip *strip) const {
+led_time_t FixedPattern::GetDuration(const ILedStrip *strip) const {
     return 750; // 750ms like Arduino
 }
 
-void FixedPattern::Update(LEDStrip *strip, led_time_t offset) {
+void FixedPattern::Update(ILedStrip *strip, led_time_t offset) {
     if (!strip || strip->numPixels() == 0) return;
     
     // Arduino-style fixed pattern cycling through all 3 colors
@@ -149,11 +149,11 @@ void FixedPattern::Update(LEDStrip *strip, led_time_t offset) {
 }
 
 // StrobePattern implementation
-led_time_t StrobePattern::GetDuration(const LEDStrip *strip) const {
+led_time_t StrobePattern::GetDuration(const ILedStrip *strip) const {
     return 750; // 750ms like Arduino (4Hz at 100% speed, 10Hz at 250% speed)
 }
 
-void StrobePattern::Update(LEDStrip *strip, led_time_t offset) {
+void StrobePattern::Update(ILedStrip *strip, led_time_t offset) {
     if (!strip) return;
     
     // Arduino-style strobe cycling through all 3 colors
@@ -167,11 +167,11 @@ void StrobePattern::Update(LEDStrip *strip, led_time_t offset) {
 }
 
 // MarchPattern implementation
-led_time_t MarchPattern::GetDuration(const LEDStrip *strip) const {
+led_time_t MarchPattern::GetDuration(const ILedStrip *strip) const {
     return 1000; // 1 second cycle like Arduino
 }
 
-void MarchPattern::Update(LEDStrip *strip, led_time_t offset) {
+void MarchPattern::Update(ILedStrip *strip, led_time_t offset) {
     if (!strip || strip->numPixels() == 0) return;
 
     // Validate level[0] to prevent division by zero
@@ -208,11 +208,11 @@ void MarchPattern::Update(LEDStrip *strip, led_time_t offset) {
 }
 
 // WipePattern implementation
-led_time_t WipePattern::GetDuration(const LEDStrip *strip) const {
+led_time_t WipePattern::GetDuration(const ILedStrip *strip) const {
     return 3000; // 3 second cycle like Arduino
 }
 
-void WipePattern::Update(LEDStrip *strip, led_time_t offset) {
+void WipePattern::Update(ILedStrip *strip, led_time_t offset) {
     if (!strip || strip->numPixels() == 0) return;
     
     uint16_t numPixels = strip->numPixels();
@@ -236,17 +236,17 @@ void WipePattern::Update(LEDStrip *strip, led_time_t offset) {
 MiniTwinklePattern::MiniTwinklePattern() : m_lastDim(0), m_lastLit(0) {
 }
 
-void MiniTwinklePattern::Init(LEDStrip *strip, led_time_t offset) {
+void MiniTwinklePattern::Init(ILedStrip *strip, led_time_t offset) {
     // Arduino-style initialization
     m_lastDim = m_lastLit = offset;
     Loop(strip, offset);
 }
 
-led_time_t MiniTwinklePattern::GetDuration(const LEDStrip *strip) const {
+led_time_t MiniTwinklePattern::GetDuration(const ILedStrip *strip) const {
     return 1000; // 1 second like Arduino
 }
 
-void MiniTwinklePattern::Update(LEDStrip *strip, led_time_t offset) {
+void MiniTwinklePattern::Update(ILedStrip *strip, led_time_t offset) {
     if (!strip || strip->numPixels() == 0) return;
     
     led_time_t duration = GetDuration(strip);
@@ -295,11 +295,11 @@ GradientPattern::~GradientPattern() {
     delete[] mp2;
 }
 
-led_time_t GradientPattern::GetDuration(const LEDStrip *strip) const {
+led_time_t GradientPattern::GetDuration(const ILedStrip *strip) const {
     return 1000; // 1 second cycle like Arduino
 }
 
-void GradientPattern::Init(LEDStrip *strip, const uint32_t *colors, const uint8_t *levels, led_time_t offset) {
+void GradientPattern::Init(ILedStrip *strip, const uint32_t *colors, const uint8_t *levels, led_time_t offset) {
     // Store colors and levels first
     memcpy(m_color, colors, sizeof(m_color));
     memcpy(m_level, levels, sizeof(m_level));
@@ -310,7 +310,7 @@ void GradientPattern::Init(LEDStrip *strip, const uint32_t *colors, const uint8_
     Init(strip, offset);
 }
 
-void GradientPattern::Init(LEDStrip *strip, led_time_t offset) {
+void GradientPattern::Init(ILedStrip *strip, led_time_t offset) {
     uint16_t numPixels = strip->numPixels();
     
     ESP_LOGI("GradientPattern", "Setting up gradient with colors=[0x%06lX, 0x%06lX, 0x%06lX], level[0]=%d", 
@@ -362,7 +362,7 @@ void GradientPattern::Init(LEDStrip *strip, led_time_t offset) {
     Loop(strip, offset);
 }
 
-void GradientPattern::Loop(LEDStrip *strip, led_time_t offset) {
+void GradientPattern::Loop(ILedStrip *strip, led_time_t offset) {
     // Create new random map like Arduino version
     if (mp1 && mp2) {
         uint16_t numPixels = strip->numPixels();
@@ -396,7 +396,7 @@ void GradientPattern::Loop(LEDStrip *strip, led_time_t offset) {
     Update(strip, offset);
 }
 
-void GradientPattern::Update(LEDStrip *strip, led_time_t offset) {
+void GradientPattern::Update(ILedStrip *strip, led_time_t offset) {
     if (!strip || strip->numPixels() == 0) return;
     
     uint16_t numPixels = strip->numPixels();
@@ -430,11 +430,11 @@ void GradientPattern::Update(LEDStrip *strip, led_time_t offset) {
 }
 
 // CandyCanePattern implementation
-led_time_t CandyCanePattern::GetDuration(const LEDStrip *strip) const {
+led_time_t CandyCanePattern::GetDuration(const ILedStrip *strip) const {
     return 200; // 200ms cycle like Arduino
 }
 
-void CandyCanePattern::Update(LEDStrip *strip, led_time_t offset) {
+void CandyCanePattern::Update(ILedStrip *strip, led_time_t offset) {
     if (!strip || strip->numPixels() == 0) return;
     
     uint16_t numPixels = strip->numPixels();
@@ -452,11 +452,11 @@ void CandyCanePattern::Update(LEDStrip *strip, led_time_t offset) {
 }
 
 // TestPattern implementation
-led_time_t TestPattern::GetDuration(const LEDStrip *strip) const {
+led_time_t TestPattern::GetDuration(const ILedStrip *strip) const {
     return 3000; // 3 second cycle
 }
 
-void TestPattern::Update(LEDStrip *strip, led_time_t offset) {
+void TestPattern::Update(ILedStrip *strip, led_time_t offset) {
     led_time_t phaseTime = GetDuration(strip) / 3;
     
     if (offset < phaseTime) {
@@ -472,7 +472,7 @@ void TestPattern::Update(LEDStrip *strip, led_time_t offset) {
 }
 
 // DiagnosticPattern implementation
-void DiagnosticPattern::Update(LEDStrip *strip, led_time_t offset) {
+void DiagnosticPattern::Update(ILedStrip *strip, led_time_t offset) {
     strip->clear();
     
     // Show diagnostic code as number of lit pixels

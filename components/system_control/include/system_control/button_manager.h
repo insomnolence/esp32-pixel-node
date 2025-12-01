@@ -6,6 +6,7 @@
 #include "esp_log.h"
 #include "esp_intr_alloc.h"
 #include "esp_attr.h"
+#include "system_control/system_hardware_interface.h"
 #include <functional>
 
 /**
@@ -21,13 +22,16 @@ public:
         BUTTON_2_PRESS     // GPIO configured as BUTTON_2_GPIO (default: GPIO 2 on ESP32C3)
     };
     
-    ButtonManager();
+    ButtonManager(SystemHardwareInterface* hardware);
     
     /**
      * @brief Initialize GPIO pins and interrupt handlers
+     * @param pin1_gpio GPIO number for Button 1 (Sequence)
+     * @param pin2_gpio GPIO number for Button 2 (Random)
+     * @param debounce_ms Debounce time in milliseconds
      * @return ESP_OK on success, error code on failure
      */
-    esp_err_t init();
+    esp_err_t init(uint8_t pin1_gpio, uint8_t pin2_gpio, uint32_t debounce_ms);
     
     /**
      * @brief Set callback function for button events
@@ -50,7 +54,12 @@ private:
     uint32_t button2_last_time = 0;
     
     // Configuration
+    uint8_t pin1;
+    uint8_t pin2;
+    uint32_t debounce_delay;
+    
     static const char* TAG;
+    SystemHardwareInterface* hardware;
     std::function<void(ButtonEvent)> eventCallback;
     
     // Helper methods

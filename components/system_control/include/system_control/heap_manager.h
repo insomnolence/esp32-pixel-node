@@ -83,7 +83,7 @@ public:
 };
 
 // Factory pattern with error handling for graceful allocation failures
-template<typename T, typename... Args>
+template<typename T>
 class ObjectFactory {
 public:
     enum class CreateResult {
@@ -100,6 +100,7 @@ public:
         explicit operator bool() const { return success(); }
     };
     
+    template<typename... Args>
     static FactoryReturn create(Args&&... args) noexcept {
         T* raw_ptr = NoThrowAllocator<T>::construct(std::forward<Args>(args)...);
         
@@ -110,6 +111,7 @@ public:
         return {esp_unique_ptr<T>(raw_ptr), CreateResult::SUCCESS};
     }
     
+    template<typename... Args>
     static FactoryReturn createWithValidation(Args&&... args) noexcept {
         T* raw_ptr = NoThrowAllocator<T>::construct(std::forward<Args>(args)...);
         

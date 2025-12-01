@@ -1,14 +1,15 @@
 #include "led/player.h"
 #include "led/led_controller.h"
 #include "led/led_strip.h"
+#include "packet/packet.h"
 #include "esp_log.h"
 #include "common/button_feedback_types.h"
 #include <cstring>
 
 const char* LEDController::TAG = "LEDController";
 
-LEDController::LEDController(uint8_t pin, uint16_t count) 
-    : strip(nullptr)
+LEDController::LEDController(ILedStrip* s)
+    : strip(s)
     , player(nullptr)
     , idleSequence(nullptr)
     , alertSequence(nullptr)
@@ -18,13 +19,16 @@ LEDController::LEDController(uint8_t pin, uint16_t count)
     , warningSequence(nullptr)
     , exitSequence(nullptr)
     , initialized(false)
-    , ledPin(pin)
-    , ledCount(count)
+    , ledCount(s ? s->numPixels() : 0)
     , singleRandomActive(false)
     , singleRandomStartTime(0)
     , ledCommandQueue(nullptr)
     , ledTaskHandle(nullptr)
+    , ledTaskExitSemaphore(nullptr)
     , ledTaskMode(false)
+    , ledTaskShutdownRequested(false)
+    , lastPatternReceivedTime(0)
+    , lastRootStatusCheck(0)
 {
     // Initialize currentPacket to zero
     memset(&currentPacket, 0, sizeof(currentPacket));
@@ -36,7 +40,7 @@ LEDController::~LEDController() {
 }
 
 void LEDController::cleanup() {
-    delete strip;
+    // Do NOT delete strip, we don't own it
     strip = nullptr;
     delete player;
     player = nullptr;
@@ -57,32 +61,28 @@ void LEDController::cleanup() {
     initialized = false;
 }
 
-esp_err_t LEDController::begin() {
-    ESP_LOGI(TAG, "Initializing LED Controller - Pin: %d, Count: %d", ledPin, ledCount);
+esp_err_t LEDController::begin(bool useTaskMode) {
+    ESP_LOGI(TAG, "Initializing LED Controller - Count: %d, TaskMode: %s", ledCount, useTaskMode ? "true" : "false");
+
+    if (!strip) {
+        ESP_LOGE(TAG, "No LED strip provided!");
+        return ESP_ERR_INVALID_ARG;
+    }
 
     // Track number of successful allocations for better error reporting
     int allocations_completed = 0;
 
-    // Create LED strip (allocation 1 of 9)
-    strip = new(std::nothrow) LEDStrip(ledCount, ledPin);
-    if (!strip) {
-        ESP_LOGE(TAG, "Failed to create LED strip (allocation 1/9) - cleaning up %d prior allocations", allocations_completed);
-        cleanup();
-        return ESP_ERR_NO_MEM;
-    }
-    allocations_completed++;
-
     esp_err_t ret = strip->begin();
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to initialize LED strip: %s - cleaning up %d allocations", esp_err_to_name(ret), allocations_completed);
+        ESP_LOGE(TAG, "Failed to initialize LED strip: %s", esp_err_to_name(ret));
         cleanup();
         return ret;
     }
 
-    // Create player (allocation 2 of 9)
+    // Create player (allocation 1 of 8)
     player = new(std::nothrow) Player();
     if (!player) {
-        ESP_LOGE(TAG, "Failed to create player (allocation 2/9) - cleaning up %d prior allocations", allocations_completed);
+        ESP_LOGE(TAG, "Failed to create player (allocation 1/8)");
         cleanup();
         return ESP_ERR_NO_MEM;
     }
@@ -170,17 +170,23 @@ esp_err_t LEDController::begin() {
     strip->show();
     
     initialized = true;
-    
+
     // Initialize LED task processing (works on both ESP32 and ESP32C3)
-    esp_err_t led_task_result = initLEDTask();
-    if (led_task_result == ESP_OK) {
+    // Skip task mode for unit tests to allow synchronous testing
+    if (useTaskMode) {
+        esp_err_t led_task_result = initLEDTask();
+        if (led_task_result == ESP_OK) {
 #ifdef CONFIG_IDF_TARGET_ESP32
-        ESP_LOGI(TAG, "LED Controller initialized with dedicated LED task on Core 1");
+            ESP_LOGI(TAG, "LED Controller initialized with dedicated LED task on Core 1");
 #else
-        ESP_LOGI(TAG, "LED Controller initialized with high-priority LED task on Core 0");
+            ESP_LOGI(TAG, "LED Controller initialized with high-priority LED task on Core 0");
 #endif
+        } else {
+            ESP_LOGW(TAG, "LED task initialization failed, falling back to main loop mode");
+            ledTaskMode = false;
+        }
     } else {
-        ESP_LOGW(TAG, "LED task initialization failed, falling back to main loop mode");
+        ESP_LOGI(TAG, "LED Controller initialized in synchronous mode (no task)");
         ledTaskMode = false;
     }
     
@@ -234,13 +240,9 @@ esp_err_t LEDController::parsePacketData(const GenericPacket& packet, Packet& pa
         return ESP_ERR_INVALID_SIZE;
     }
     
-    // Try exact size match first (struct alignment)
-    if (packet.getPacket(parsedPacket)) {
-        ESP_LOGI(TAG, "✅ Exact packet format match");
-        return ESP_OK;
-    } 
-    // Handle 19-byte packets manually (mobile app format)
-    else if (packet.getLength() == 19) {
+    // Handle 19-byte packets - always use manual parsing for correct color byte order
+    // The Flutter app sends colors as little-endian {R, G, B, 0} which needs conversion
+    if (packet.getLength() == 19) {
         ESP_LOGI(TAG, "📱 Manual parsing of 19-byte mobile app packet");
         const uint8_t* data = packet.getData();
         
@@ -257,9 +259,14 @@ esp_err_t LEDController::parsePacketData(const GenericPacket& packet, Packet& pa
         parsedPacket.pattern = data[3];
         
         // Parse color array (3 x uint32_t = 12 bytes) - bounds are guaranteed by length check
-        memcpy(&parsedPacket.color[0], &data[4], 4);
-        memcpy(&parsedPacket.color[1], &data[8], 4);
-        memcpy(&parsedPacket.color[2], &data[12], 4);
+        // Flutter sends 32-bit ARGB colors in little-endian, so bytes are {B, G, R, A} in memory
+        // Convert to standard RGB format: 0xRRGGBB
+        for (int i = 0; i < 3; i++) {
+            const uint8_t* colorBytes = &data[4 + i * 4];
+            parsedPacket.color[i] = ((uint32_t)colorBytes[2] << 16) |  // R (byte 2) -> high byte
+                                    ((uint32_t)colorBytes[1] << 8) |   // G (byte 1) -> middle byte
+                                    ((uint32_t)colorBytes[0]);          // B (byte 0) -> low byte
+        }
         
         // Parse level array (3 x uint8_t = 3 bytes) - bounds are guaranteed by length check
         parsedPacket.level[0] = data[16];
@@ -286,13 +293,69 @@ void LEDController::logPacketInfo(const Packet& pkt) const {
     ESP_LOGI(TAG, "========================");
 }
 
+void LEDController::setPatternBroadcastCallback(PatternBroadcastCallback callback) {
+    patternBroadcastCallback = callback;
+
+    // Set up player's step change callback to broadcast step changes to mesh
+    if (player && callback) {
+        player->setStepChangeCallback([this](const Packet& packet) {
+            ESP_LOGI(TAG, "Player step changed - broadcasting to mesh");
+            broadcastPattern(packet);
+        });
+    }
+}
+
+void LEDController::setRootStatusCallback(RootStatusCallback callback) {
+    rootStatusCallback = callback;
+}
+
+void LEDController::onPatternReceived() {
+    lastPatternReceivedTime = esp_timer_get_time() / 1000; // Convert to ms
+}
+
+void LEDController::broadcastPattern(const Packet& packet) {
+    if (!patternBroadcastCallback) {
+        // No callback set - this is fine, not all modes need broadcasting
+        return;
+    }
+
+    // Serialize the packet to wire format (19 bytes)
+    uint8_t wireBuffer[LED_PACKET_WIRE_SIZE];
+    size_t wireLen = serializePacketToWire(packet, wireBuffer, sizeof(wireBuffer));
+
+    if (wireLen == 0) {
+        ESP_LOGE(TAG, "Failed to serialize pattern for broadcast");
+        return;
+    }
+
+    // Create GenericPacket and invoke callback
+    GenericPacket genericPacket(wireBuffer, wireLen);
+    patternBroadcastCallback(genericPacket);
+}
+
 void LEDController::setIdleMode() {
     if (!initialized) return;
-    
+
     ESP_LOGI(TAG, "Switching to idle mode");
     setSequence(idleSequence);
     // Reset single random tracking
     singleRandomActive = false;
+
+    // Broadcast idle pattern to mesh if callback is set
+    if (idleSequence && idleSequence->GetStepCount() > 0) {
+        Packet packet;
+        packet.command = idleSequence->GetCommand(0);
+        packet.brightness = idleSequence->GetBrightness(0);
+        packet.speed = idleSequence->GetSpeed(0);
+        packet.pattern = idleSequence->GetPatternId(0);
+        packet.color[0] = idleSequence->GetColors(0, 0);
+        packet.color[1] = idleSequence->GetColors(0, 1);
+        packet.color[2] = idleSequence->GetColors(0, 2);
+        packet.level[0] = idleSequence->GetLevels(0, 0);
+        packet.level[1] = idleSequence->GetLevels(0, 1);
+        packet.level[2] = idleSequence->GetLevels(0, 2);
+        broadcastPattern(packet);
+    }
 }
 
 void LEDController::setAlertMode() {
@@ -311,35 +374,92 @@ void LEDController::setRandomMode() {
 
 void LEDController::setWarningMode() {
     if (!initialized) return;
-    
+
     ESP_LOGI(TAG, "Switching to warning mode (yellow pattern)");
     setSequence(warningSequence);
     // Reset single random tracking
     singleRandomActive = false;
+    // Reset pattern received time - autonomous root generates patterns, doesn't receive them
+    // This prevents the "root disappeared" 15s timeout from triggering
+    lastPatternReceivedTime = 0;
+
+    // Broadcast warning pattern to mesh if callback is set
+    if (warningSequence && warningSequence->GetStepCount() > 0) {
+        Packet packet;
+        packet.command = warningSequence->GetCommand(0);
+        packet.brightness = warningSequence->GetBrightness(0);
+        packet.speed = warningSequence->GetSpeed(0);
+        packet.pattern = warningSequence->GetPatternId(0);
+        packet.color[0] = warningSequence->GetColors(0, 0);
+        packet.color[1] = warningSequence->GetColors(0, 1);
+        packet.color[2] = warningSequence->GetColors(0, 2);
+        packet.level[0] = warningSequence->GetLevels(0, 0);
+        packet.level[1] = warningSequence->GetLevels(0, 1);
+        packet.level[2] = warningSequence->GetLevels(0, 2);
+        broadcastPattern(packet);
+    }
 }
 
 void LEDController::setExitMode() {
     if (!initialized) return;
-    
+
     ESP_LOGI(TAG, "Switching to exit mode (red pattern)");
     setSequence(exitSequence);
     // Reset single random tracking
     singleRandomActive = false;
+    // Reset pattern received time - autonomous root generates patterns, doesn't receive them
+    // This prevents the "root disappeared" 15s timeout from triggering
+    lastPatternReceivedTime = 0;
+
+    // Broadcast exit pattern to mesh if callback is set
+    if (exitSequence && exitSequence->GetStepCount() > 0) {
+        Packet packet;
+        packet.command = exitSequence->GetCommand(0);
+        packet.brightness = exitSequence->GetBrightness(0);
+        packet.speed = exitSequence->GetSpeed(0);
+        packet.pattern = exitSequence->GetPatternId(0);
+        packet.color[0] = exitSequence->GetColors(0, 0);
+        packet.color[1] = exitSequence->GetColors(0, 1);
+        packet.color[2] = exitSequence->GetColors(0, 2);
+        packet.level[0] = exitSequence->GetLevels(0, 0);
+        packet.level[1] = exitSequence->GetLevels(0, 1);
+        packet.level[2] = exitSequence->GetLevels(0, 2);
+        broadcastPattern(packet);
+    }
 }
 
 void LEDController::setRandomModeWithNewPattern() {
     if (!initialized) return;
-    
+
     ESP_LOGI(TAG, "Switching to single random pattern mode with new pattern selection");
     // Pick a new random pattern
     singleRandomSequence->pickNewRandomPattern();
     // Switch to the single random sequence (will run for 30 seconds then we'll switch back to idle)
     setSequence(singleRandomSequence);
-    
+
     // Track that we're in single random mode and when it started
     singleRandomActive = true;
-    singleRandomStartTime = esp_timer_get_time() / 1000; // Current time in ms
+    singleRandomStartTime = strip->getMillis(); // Current time in ms
+    // Reset pattern received time - autonomous root generates patterns, doesn't receive them
+    // This prevents the "root disappeared" 15s timeout from triggering
+    lastPatternReceivedTime = 0;
     ESP_LOGI(TAG, "Single random pattern started - will return to idle after 30 seconds");
+
+    // Broadcast random pattern to mesh if callback is set
+    if (singleRandomSequence && singleRandomSequence->GetStepCount() > 0) {
+        Packet packet;
+        packet.command = singleRandomSequence->GetCommand(0);
+        packet.brightness = singleRandomSequence->GetBrightness(0);
+        packet.speed = singleRandomSequence->GetSpeed(0);
+        packet.pattern = singleRandomSequence->GetPatternId(0);
+        packet.color[0] = singleRandomSequence->GetColors(0, 0);
+        packet.color[1] = singleRandomSequence->GetColors(0, 1);
+        packet.color[2] = singleRandomSequence->GetColors(0, 2);
+        packet.level[0] = singleRandomSequence->GetLevels(0, 0);
+        packet.level[1] = singleRandomSequence->GetLevels(0, 1);
+        packet.level[2] = singleRandomSequence->GetLevels(0, 2);
+        broadcastPattern(packet);
+    }
 }
 
 // Note: Visual feedback methods moved to ButtonFeedbackController for local-only feedback
@@ -399,7 +519,7 @@ void LEDController::update() {
     }
     
     // Main loop mode: perform LED updates on current core
-    time_t now = esp_timer_get_time() / 1000; // Convert to ms
+    time_t now = strip->getMillis(); // Convert to ms
     
     // Check if single random pattern should return to idle (30 seconds elapsed)
     if (singleRandomActive) {
@@ -450,11 +570,23 @@ esp_err_t LEDController::initLEDTask() {
 #else
     ESP_LOGI(TAG, "Initializing high-priority LED task for ESP32C3 (Core 0)");
 #endif
-    
+
+    // Reset shutdown flag before creating task
+    ledTaskShutdownRequested = false;
+
+    // Create semaphore to signal task exit completion
+    ledTaskExitSemaphore = xSemaphoreCreateBinary();
+    if (!ledTaskExitSemaphore) {
+        ESP_LOGE(TAG, "Failed to create LED task exit semaphore");
+        return ESP_ERR_NO_MEM;
+    }
+
     // Create command queue for main loop to LED task communication
     ledCommandQueue = xQueueCreate(10, sizeof(LEDCommand));
     if (!ledCommandQueue) {
         ESP_LOGE(TAG, "Failed to create LED command queue");
+        vSemaphoreDelete(ledTaskExitSemaphore);
+        ledTaskExitSemaphore = nullptr;
         return ESP_ERR_NO_MEM;
     }
     
@@ -486,6 +618,8 @@ esp_err_t LEDController::initLEDTask() {
         ESP_LOGE(TAG, "Failed to create LED processing task");
         vQueueDelete(ledCommandQueue);
         ledCommandQueue = nullptr;
+        vSemaphoreDelete(ledTaskExitSemaphore);
+        ledTaskExitSemaphore = nullptr;
         return ESP_ERR_NO_MEM;
     }
     
@@ -501,25 +635,42 @@ void LEDController::shutdownLEDTask() {
 
     ESP_LOGI(TAG, "Shutting down LED task processing");
 
-    // Send shutdown command to LED task
+    // Signal the task to stop accessing the strip pointer FIRST
+    // This is critical to prevent use-after-free when MockLedStrip is destroyed
+    ledTaskShutdownRequested = true;
+
+    // Send shutdown command to LED task (may wake it from delay)
     LEDCommand shutdownCmd;
     shutdownCmd.type = LEDCommandType::SHUTDOWN;
-    sendLEDCommand(shutdownCmd, pdMS_TO_TICKS(1000));
+    sendLEDCommand(shutdownCmd, pdMS_TO_TICKS(100));
 
-    // Wait for task to self-delete by giving it time to process the shutdown command
-    // The task deletes itself when receiving SHUTDOWN, so we must not call vTaskDelete
-    vTaskDelay(pdMS_TO_TICKS(100));
+    // Wait for the task to signal it has fully exited using semaphore
+    // This is more reliable than polling eTaskGetState() on a potentially deleted handle
+    if (ledTaskExitSemaphore) {
+        if (xSemaphoreTake(ledTaskExitSemaphore, pdMS_TO_TICKS(2000)) != pdTRUE) {
+            ESP_LOGW(TAG, "LED task did not signal exit in time, forcing deletion");
+            if (ledTaskHandle) {
+                vTaskDelete(ledTaskHandle);
+            }
+        }
+    }
 
-    // Clear the task handle since the task has self-deleted
+    // Clear the task handle since the task has exited
     ledTaskHandle = nullptr;
 
-    // Clean up queue
+    // Now safe to clean up queue and semaphore - task is guaranteed to be gone
     if (ledCommandQueue) {
         vQueueDelete(ledCommandQueue);
         ledCommandQueue = nullptr;
     }
 
+    if (ledTaskExitSemaphore) {
+        vSemaphoreDelete(ledTaskExitSemaphore);
+        ledTaskExitSemaphore = nullptr;
+    }
+
     ledTaskMode = false;
+    ledTaskShutdownRequested = false;  // Reset for potential re-init
     ESP_LOGI(TAG, "LED task processing shut down");
 }
 
@@ -534,17 +685,35 @@ void LEDController::ledProcessingTask() {
 #else
     ESP_LOGI(TAG, "LED processing task started on ESP32C3 Core 0 (Priority 8)");
 #endif
-    
+
     LEDCommand command;
     TickType_t lastWakeTime = xTaskGetTickCount();
     const TickType_t frequency = pdMS_TO_TICKS(15); // 15ms = 67 FPS for smooth LED performance
-    
+
     while (true) {
+        // Check shutdown flag BEFORE accessing queue to prevent race condition
+        // where queue is deleted while we're trying to use it
+        if (ledTaskShutdownRequested) {
+            ESP_LOGI(TAG, "LED task shutdown requested via flag");
+            // Signal that we're exiting before deleting ourselves
+            if (ledTaskExitSemaphore) {
+                xSemaphoreGive(ledTaskExitSemaphore);
+            }
+            vTaskDelete(nullptr);
+            return;
+        }
+
         // Process any pending commands with non-blocking receive
-        while (xQueueReceive(ledCommandQueue, &command, 0) == pdTRUE) {
+        // Queue access is safe here because shutdown flag check above ensures
+        // the queue won't be deleted while we're using it
+        while (ledCommandQueue && xQueueReceive(ledCommandQueue, &command, 0) == pdTRUE) {
             switch (command.type) {
                 case LEDCommandType::SHUTDOWN:
                     ESP_LOGI(TAG, "LED task received shutdown command");
+                    // Signal that we're exiting before deleting ourselves
+                    if (ledTaskExitSemaphore) {
+                        xSemaphoreGive(ledTaskExitSemaphore);
+                    }
                     vTaskDelete(nullptr); // Delete self
                     return;
                     
@@ -576,8 +745,11 @@ void LEDController::ledProcessingTask() {
         }
         
         // Perform regular LED updates with precise timing
-        if (initialized && player && strip) {
-            led_time_t now = esp_timer_get_time() / 1000; // Convert to ms
+        // Capture strip pointer locally and double-check shutdown flag to prevent
+        // accessing strip after cleanup() nullifies it (race condition with destructor)
+        ILedStrip* localStrip = strip;  // Capture atomically
+        if (initialized && player && localStrip && !ledTaskShutdownRequested) {
+            led_time_t now = localStrip->getMillis(); // Use local copy
             
             // Check if single random pattern should return to idle (30 seconds elapsed)
             if (singleRandomActive) {
@@ -591,12 +763,17 @@ void LEDController::ledProcessingTask() {
                     }
                 }
             }
-            
+
+            // NOTE: Removed "return to idle when root disappears" logic
+            // Clients will stay on their current pattern until root sends a new one
+            // If root truly disappears, clients will naturally go to idle when they
+            // lose mesh connectivity and restart, or when a new root emerges
+
             // Update pattern if needed
-            player->UpdatePattern(now, strip);
-            
+            player->UpdatePattern(now, localStrip);
+
             // Update the LED strip
-            player->UpdateStrip(now, strip);
+            player->UpdateStrip(now, localStrip);
         }
         
         // Maintain precise FPS timing (guaranteed CPU time due to high priority)
@@ -684,9 +861,9 @@ void LEDController::handleButtonFeedbackInLEDTask(FeedbackType type, uint32_t du
         
         case TAKEOVER_IN_PROGRESS: {
             // Animated purple marching pattern
-            uint32_t end_time = esp_timer_get_time() / 1000 + duration_ms;
-            while (esp_timer_get_time() / 1000 < end_time) {
-                uint32_t elapsed = (esp_timer_get_time() / 1000) - (end_time - duration_ms);
+            uint32_t end_time = strip->getMillis() + duration_ms;
+            while (strip->getMillis() < end_time) {
+                uint32_t elapsed = (strip->getMillis()) - (end_time - duration_ms);
                 uint32_t phase = (elapsed / 150) % 4;
                 
                 strip->clear();
@@ -715,8 +892,8 @@ void LEDController::handleButtonFeedbackInLEDTask(FeedbackType type, uint32_t du
         
         case TAKEOVER_FAILED: {
             // Red strobe for failure
-            uint32_t end_time = esp_timer_get_time() / 1000 + duration_ms;
-            while (esp_timer_get_time() / 1000 < end_time) {
+            uint32_t end_time = strip->getMillis() + duration_ms;
+            while (strip->getMillis() < end_time) {
                 // Red on
                 for (uint16_t i = 0; i < led_count; i++) {
                     strip->setPixelColor(i, 0xFF0000); // RED

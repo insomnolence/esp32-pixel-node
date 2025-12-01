@@ -18,6 +18,9 @@ public:
     // Connection management
     void forceDisconnect(); // Force disconnect current connection
 
+    // Root transfer notification (root election redesign)
+    void sendRootTransferredNotification();
+
 private:
     void handleReadEvent(esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) override;
     void handleWriteEvent(esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) override;

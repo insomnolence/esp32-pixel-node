@@ -9,7 +9,8 @@ BLEGattServer* BLEGattServer::instance = nullptr;
 SemaphoreHandle_t BLEGattServer::instance_mutex = nullptr;
 uint32_t BLEGattServer::callback_counter = 0;
 
-BLEGattServer::BLEGattServer() {
+BLEGattServer::BLEGattServer(BleHardwareInterface* hardware)
+    : hardware_(hardware) {
     adv_params = {
         .adv_int_min = 0x20,      // 20ms - fast advertising for quick discovery
         .adv_int_max = 0x30,      // 30ms - balanced for power and speed
@@ -56,74 +57,29 @@ BLEGattServer::~BLEGattServer() {
     }
 }
 
-esp_err_t BLEGattServer::bleControllerInitAndEnable() {
-    // In ESP-IDF 5.x, BLE controller initialization is handled automatically
-    // by the Bluedroid stack - no manual controller init needed for BLE-only
-    ESP_LOGI(TAG, "BLE controller initialization skipped - handled by Bluedroid");
-    return ESP_OK;
-}
-
-esp_err_t BLEGattServer::bleBluedroidInitAndEnable() {
-    esp_err_t ret;
-    
-    // Check if Bluedroid is already initialized (may happen with WiFi coexistence)
-    esp_bt_controller_status_t bt_state = esp_bt_controller_get_status();
-    if (bt_state == ESP_BT_CONTROLLER_STATUS_IDLE) {
-        ESP_LOGI(TAG, "BT controller not initialized, initializing now");
-        esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
-        ret = esp_bt_controller_init(&bt_cfg);
-        if (ret) {
-            ESP_LOGE(TAG, "%s bt controller init failed: %s", __func__, esp_err_to_name(ret));
-            return ret;
-        }
-        ret = esp_bt_controller_enable(ESP_BT_MODE_BLE);
-        if (ret) {
-            ESP_LOGE(TAG, "%s bt controller enable failed: %s", __func__, esp_err_to_name(ret));
-            return ret;
-        }
-    } else {
-        ESP_LOGI(TAG, "BT controller already initialized (likely by WiFi coexistence)");
-    }
-    
-    // Check if Bluedroid is already initialized
-    esp_bluedroid_status_t bluedroid_status = esp_bluedroid_get_status();
-    if (bluedroid_status == ESP_BLUEDROID_STATUS_UNINITIALIZED) {
-        ret = esp_bluedroid_init();
-        if (ret) {
-            ESP_LOGE(TAG, "%s init bluedroid failed: %s", __func__, esp_err_to_name(ret));
-            return ret;
-        }
-    } else {
-        ESP_LOGI(TAG, "Bluedroid already initialized");
-    }
-    
-    if (bluedroid_status != ESP_BLUEDROID_STATUS_ENABLED) {
-        ret = esp_bluedroid_enable();
-        if (ret) {
-            ESP_LOGE(TAG, "%s enable bluedroid failed: %s", __func__, esp_err_to_name(ret));
-            return ret;
-        }
-    } else {
-        ESP_LOGI(TAG, "Bluedroid already enabled");
-    }
-    
-    return ESP_OK;
-}
-
 esp_err_t BLEGattServer::init() {
-    esp_err_t ret;
-    ret = bleControllerInitAndEnable();
-    if (ret != ESP_OK) return ret;
+    if (!hardware_) {
+        ESP_LOGE(TAG, "Hardware interface is null");
+        return ESP_ERR_INVALID_ARG;
+    }
 
-    ret = bleBluedroidInitAndEnable();
-    if (ret != ESP_OK) return ret;
+    // Use hardware abstraction for BLE stack initialization
+    esp_err_t ret = hardware_->initStack();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize BLE stack: %s", esp_err_to_name(ret));
+        return ret;
+    }
 
     return ESP_OK;
 }
 
 esp_err_t BLEGattServer::registerGattCallbacks() {
     ESP_LOGI(TAG, "🔥 Registering GATT callbacks");
-    esp_err_t ret = esp_ble_gatts_register_callback(BLEGattServer::gattsEventHandler);
+    if (!hardware_) {
+        ESP_LOGE(TAG, "Hardware interface is null");
+        return ESP_ERR_INVALID_ARG;
+    }
+    esp_err_t ret = hardware_->registerGattsCallback(BLEGattServer::gattsEventHandler);
     if (ret) {
         ESP_LOGE(TAG, "🔥 gatts register error, error code = %x", ret);
         return ret;
@@ -134,7 +90,11 @@ esp_err_t BLEGattServer::registerGattCallbacks() {
 
 esp_err_t BLEGattServer::registerGattApp(uint16_t app_id) {
     ESP_LOGI(TAG, "🔥 Registering GATT app with ID: %d", app_id);
-    esp_err_t ret = esp_ble_gatts_app_register(app_id);
+    if (!hardware_) {
+        ESP_LOGE(TAG, "Hardware interface is null");
+        return ESP_ERR_INVALID_ARG;
+    }
+    esp_err_t ret = hardware_->registerGattsApp(app_id);
     if (ret) {
         ESP_LOGE(TAG, "🔥 gatts app register error, error code = %x", ret);
         return ret;
@@ -145,7 +105,11 @@ esp_err_t BLEGattServer::registerGattApp(uint16_t app_id) {
 
 esp_err_t BLEGattServer::startAdvertising() {
     ESP_LOGI(TAG, "🔍 Attempting to start BLE advertising...");
-    esp_err_t ret = esp_ble_gap_start_advertising(&adv_params);
+    if (!hardware_) {
+        ESP_LOGE(TAG, "Hardware interface is null");
+        return ESP_ERR_INVALID_ARG;
+    }
+    esp_err_t ret = hardware_->startAdvertising(&adv_params);
     if (ret) {
         ESP_LOGE(TAG, "🚨 Advertising start FAILED: %s", esp_err_to_name(ret));
         return ret;
@@ -155,9 +119,12 @@ esp_err_t BLEGattServer::startAdvertising() {
 }
 
 esp_err_t BLEGattServer::setDeviceName(const char *device_name){
-    esp_err_t ret = esp_ble_gap_set_device_name(device_name);
-      if (ret)
-    {
+    if (!hardware_) {
+        ESP_LOGE(TAG, "Hardware interface is null");
+        return ESP_ERR_INVALID_ARG;
+    }
+    esp_err_t ret = hardware_->setDeviceName(device_name);
+    if (ret) {
         ESP_LOGE(TAG, "set device name failed, error code = %x", ret);
         return ret;
     }

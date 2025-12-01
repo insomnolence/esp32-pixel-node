@@ -9,7 +9,7 @@
 
 // Forward declarations
 class LEDController;
-class LEDStrip;
+class ILedStrip;
 
 /**
  * @brief ButtonFeedbackController provides LOCAL-ONLY LED feedback for button interface

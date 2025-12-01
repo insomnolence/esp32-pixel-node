@@ -2,6 +2,7 @@
 #include "led/gradient.h"
 #include "led/pattern.h"
 #include "led/led_strip.h"
+#include "mock_led_strip.h"
 
 static const uint32_t COLOR_RED = LEDStrip::Color(255, 0, 0);
 static const uint32_t COLOR_GREEN = LEDStrip::Color(0, 255, 0);
@@ -26,11 +27,14 @@ TEST_CASE("Gradient handles boundaries and interpolation", "[led][gradient]") {
 }
 
 TEST_CASE("LEDStrip color utilities blend and fade as expected", "[led][color]") {
+    // fade formula: (high - low) * value / 255 + low
+    // ColorFade(RED, 128) = fade(0, 255, 128) = (255-0)*128/255 + 0 = 128
     uint32_t half_red = LEDStrip::ColorFade(COLOR_RED, 128);
-    TEST_ASSERT_EQUAL_UINT32(LEDStrip::Color(127, 0, 0), half_red);
+    TEST_ASSERT_EQUAL_UINT32(LEDStrip::Color(128, 0, 0), half_red);
 
+    // ColorBlend(RED, BLUE, 128) blends each channel: r=fade(255,0,128)=127, b=fade(0,255,128)=128
     uint32_t blend = LEDStrip::ColorBlend(COLOR_RED, COLOR_BLUE, 128);
-    TEST_ASSERT_EQUAL_UINT32(LEDStrip::Color(127, 0, 127), blend);
+    TEST_ASSERT_EQUAL_UINT32(LEDStrip::Color(127, 0, 128), blend);
 
     TEST_ASSERT_EQUAL_UINT32(COLOR_RED, LEDStrip::ColorWheel(0));
     TEST_ASSERT_EQUAL_UINT32(COLOR_GREEN, LEDStrip::ColorWheel(85));
@@ -38,7 +42,7 @@ TEST_CASE("LEDStrip color utilities blend and fade as expected", "[led][color]")
 }
 
 TEST_CASE("FixedPattern lights every third pixel", "[led][pattern]") {
-    LEDStrip strip(6, 18);
+    MockLedStrip strip(6);
     FixedPattern pattern;
     uint32_t colors[3] = {COLOR_RED, COLOR_GREEN, COLOR_BLUE};
     uint8_t levels[3] = {0, 0, 0};
@@ -60,7 +64,7 @@ TEST_CASE("FixedPattern lights every third pixel", "[led][pattern]") {
 }
 
 TEST_CASE("StrobePattern alternates between color segments and black", "[led][pattern]") {
-    LEDStrip strip(4, 18);
+    MockLedStrip strip(4);
     StrobePattern pattern;
     uint32_t colors[3] = {COLOR_RED, COLOR_GREEN, COLOR_BLUE};
     uint8_t levels[3] = {0, 0, 0};

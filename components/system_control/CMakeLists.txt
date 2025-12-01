@@ -2,6 +2,7 @@ set(srcs
     "src/nvs_manager.cpp"
     "src/global_objects.cpp"
     "src/stack_monitor.cpp"
+    "src/esp_idf_system_hardware.cpp"
 )
 
 if(CONFIG_BUTTON_INTERFACE_ENABLED)

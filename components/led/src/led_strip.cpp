@@ -1,5 +1,8 @@
 #include "led/led_strip.h"
 #include "esp_log.h"
+#include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+
 #include "esp_random.h"
 #include "esp_check.h"
 #include "driver/rmt_tx.h"
@@ -199,6 +202,10 @@ uint8_t LEDStrip::getBrightness() const {
     return brightness_level;
 }
 
+uint32_t LEDStrip::getMillis() {
+    return esp_timer_get_time() / 1000;
+}
+
 void LEDStrip::clear() {
     if (pixel_buffer) {
         memset(pixel_buffer, 0, pixel_count * sizeof(uint32_t));
@@ -324,15 +331,18 @@ uint32_t LEDStrip::ColorRandom() {
 }
 
 uint32_t LEDStrip::ColorWheel(uint8_t wheel_pos) {
-    // Use Arduino's exact ColorWheel implementation (no inversion)
+    // Standard ColorWheel: 0=Red, 85=Green, 170=Blue
+    // Position 0-84:   Red decreasing, Green increasing
+    // Position 85-169: Green decreasing, Blue increasing
+    // Position 170-255: Blue decreasing, Red increasing
     if (wheel_pos < 85) {
-        return Color(wheel_pos * 3, 255 - wheel_pos * 3, 0);
+        return Color(255 - wheel_pos * 3, wheel_pos * 3, 0);
     } else if (wheel_pos < 170) {
         wheel_pos -= 85;
-        return Color(255 - wheel_pos * 3, 0, wheel_pos * 3);
+        return Color(0, 255 - wheel_pos * 3, wheel_pos * 3);
     } else {
         wheel_pos -= 170;
-        return Color(0, wheel_pos * 3, 255 - wheel_pos * 3);
+        return Color(wheel_pos * 3, 0, 255 - wheel_pos * 3);
     }
 }
 

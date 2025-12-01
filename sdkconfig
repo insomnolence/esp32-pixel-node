@@ -497,15 +497,6 @@ CONFIG_PARTITION_TABLE_MD5=y
 # end of Example 'Pixel ESP32' Config
 
 #
-# Button Interface Configuration
-#
-CONFIG_BUTTON_INTERFACE_ENABLED=y
-CONFIG_BUTTON_1_GPIO=3
-CONFIG_BUTTON_2_GPIO=2
-CONFIG_BUTTON_DEBOUNCE_MS=50
-# end of Button Interface Configuration
-
-#
 # Compiler options
 #
 CONFIG_COMPILER_OPTIMIZATION_DEBUG=y
@@ -2401,6 +2392,15 @@ CONFIG_WIFI_PROV_AUTOSTOP_TIMEOUT=30
 CONFIG_WIFI_PROV_STA_ALL_CHANNEL_SCAN=y
 # CONFIG_WIFI_PROV_STA_FAST_SCAN is not set
 # end of Wi-Fi Provisioning Manager
+
+#
+# Button Interface Configuration
+#
+CONFIG_BUTTON_INTERFACE_ENABLED=y
+CONFIG_BUTTON_1_GPIO=3
+CONFIG_BUTTON_2_GPIO=2
+CONFIG_BUTTON_DEBOUNCE_MS=50
+# end of Button Interface Configuration
 # end of Component config
 
 # CONFIG_IDF_EXPERIMENTAL_FEATURES is not set

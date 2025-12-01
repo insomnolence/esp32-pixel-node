@@ -42,21 +42,29 @@ void RootTakeoverManager::startTakeover() {
         ESP_LOGW(TAG, "Takeover already in progress - ignoring start request");
         return;
     }
-    
-    ESP_LOGI(TAG, "🚀 STARTING ROOT TAKEOVER PROCESS");
-    
-    // Check if there's an active BLE-connected root in the mesh (higher priority)
-    if (mesh_coordinator->hasActiveBleRoot()) {
-        ESP_LOGW(TAG, "❌ BLE-connected root detected in mesh - takeover blocked by mobile app priority");
+
+    ESP_LOGI(TAG, "STARTING ROOT TAKEOVER PROCESS");
+
+    // Check if there's an active BLE-connected on *this* node (higher priority)
+    if (mesh_coordinator->isBleConnected()) {
+        ESP_LOGW(TAG, "BLE is connected to this node - takeover blocked by mobile app priority");
         transitionToState(BLE_OVERRIDE_ACTIVE);
         completeTakeover(FAILED_BLE_PRIORITY);
         return;
     }
-    
+
+    // Check if ANY node in the network has BLE connection (root election redesign)
+    if (mesh_coordinator->networkHasBleRoot()) {
+        ESP_LOGW(TAG, "Button takeover blocked - BLE root exists in network");
+        transitionToState(BLE_OVERRIDE_ACTIVE);
+        completeTakeover(FAILED_BLE_PRIORITY);
+        return;
+    }
+
     // Store original role for potential rollback
     original_role = mesh_coordinator->getCurrentRole();
     takeover_start_time = esp_timer_get_time() / 1000;
-    
+
     transitionToState(DUAL_PRESS_DETECTED);
     ESP_LOGI(TAG, "   Original role: %s", mesh_coordinator->getRoleString());
 }
@@ -214,11 +222,11 @@ void RootTakeoverManager::initiateMeshTakeover() {
         return;
     }
     
-    // Use the mesh coordinator's forced takeover system for manual override
+    // Use the mesh coordinator's broadcast root claim for manual override
     waiting_for_role_change = true;
-    mesh_coordinator->startForcedTakeover();
+    mesh_coordinator->broadcastRootClaim(RootClaimReason::BUTTON_PRESS);
     
-    ESP_LOGI(TAG, "   Forced takeover election started - waiting for role change");
+    ESP_LOGI(TAG, "   Button-triggered root claim broadcasted - waiting for role change");
 }
 
 void RootTakeoverManager::checkNetworkSynchronization() {
