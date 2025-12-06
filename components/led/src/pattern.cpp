@@ -55,21 +55,36 @@ led_time_t FlashPattern::GetDuration(const ILedStrip *strip) const {
 
 void FlashPattern::Update(ILedStrip *strip, led_time_t offset) {
     if (!strip) return;
-    
+
     // Arduino-style flash pattern with complex timing and fading
+    // Modified with soft ramp-up to prevent inrush current spikes
     uint16_t t = offset * 300 / GetDuration(strip);
     uint16_t o = t % 100;
     uint32_t col = color(t / 100); // Cycle through colors
-    
-    if ((o <= 10) || (o >= 20 && o <= 30)) {
-        // Full brightness flash periods
-        strip->setAllColor(col);
+
+    if (o <= 10) {
+        // First flash period - ramp up over first 3 units, then full brightness
+        if (o <= 3) {
+            uint8_t ramp = (o * 255) / 3;  // 0->85->170->255 over 3 units (~40ms)
+            strip->setAllColor(LEDStrip::ColorFade(col, ramp));
+        } else {
+            strip->setAllColor(col);
+        }
+    } else if (o >= 20 && o <= 30) {
+        // Second flash period - ramp up over first 3 units
+        uint16_t flashOffset = o - 20;
+        if (flashOffset <= 3) {
+            uint8_t ramp = (flashOffset * 255) / 3;
+            strip->setAllColor(LEDStrip::ColorFade(col, ramp));
+        } else {
+            strip->setAllColor(col);
+        }
     } else if (o > 30 && o <= 60) {
-        // Fade out period
+        // Fade out period (already gradual, no change needed)
         uint8_t f = (60 - o) * 255 / 30;
         strip->setAllColor(LEDStrip::ColorFade(col, f));
     } else {
-        // Off period
+        // Off period - go fully dark
         strip->setAllColor(0x000000);
     }
 }
@@ -155,12 +170,32 @@ led_time_t StrobePattern::GetDuration(const ILedStrip *strip) const {
 
 void StrobePattern::Update(ILedStrip *strip, led_time_t offset) {
     if (!strip) return;
-    
+
     // Arduino-style strobe cycling through all 3 colors
+    // Modified: alternating pixels to reduce current draw (power-safe mode)
     led_time_t third = GetDuration(strip) / 3;
-    if ((offset / third) != (m_lastOffset / third)) {
-        strip->setAllColor(color(offset / third));
+    led_time_t colorIndex = offset / third;
+    led_time_t offsetInPhase = offset % third;
+    uint32_t col = color(colorIndex);
+    uint16_t numPixels = strip->numPixels();
+
+    // On period: first 80ms of each 250ms phase
+    const led_time_t ON_TIME = 80;
+
+    // Alternate which pixels are lit each phase to create movement
+    uint8_t phase = (offset / third) % 2;
+
+    if (offsetInPhase < ON_TIME) {
+        // Light only every other pixel to reduce current by 50%
+        for (uint16_t i = 0; i < numPixels; i++) {
+            if ((i % 2) == phase) {
+                strip->setPixelColor(i, col);
+            } else {
+                strip->setPixelColor(i, 0x000000);
+            }
+        }
     } else {
+        // Off period - all dark
         strip->setAllColor(0x000000);
     }
     m_lastOffset = offset;

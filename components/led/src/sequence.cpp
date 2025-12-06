@@ -6,9 +6,9 @@
 
 static const char* TAG = "Sequence";
 
-// IdleSequence implementation - matches Arduino: Red-White-Green gradient with slow speed
+// IdleSequence implementation - Red-White-Green gradient with slow speed
 static const Step idle_steps[] = {
-    {0, 127, 35, PATTERN_GRADIENT, {RED, WHITE, GREEN}, 17},      // Test: Higher brightness to check color saturation
+    {0, 35, 35, PATTERN_GRADIENT, {RED, WHITE, GREEN}, 17},      // Idle: brightness 35
 };
 
 IdleSequence::IdleSequence() 
@@ -33,22 +33,21 @@ AlertSequence::AlertSequence()
     ESP_LOGI(TAG, "AlertSequence created with %d steps", stepCount);
 }
 
-// RandomSequence implementation - matches Arduino patterns exactly
+// RandomSequence implementation - normal patterns at brightness 67
 static const Step random_steps[] = {
-    // From Arduino randomSteps[] - exact timing, colors, and parameters
-    {30000, 127, 160, PATTERN_MINI_TWINKLE, {RED, WHITE, YELLOW}, 160},    // rwy twinkle
-    {30000, 127, 160, PATTERN_MINI_TWINKLE, {RED, WHITE, GREEN}, 160},     // rwg twinkle  
-    {30000, 127, 35,  PATTERN_GRADIENT,    {RED, WHITE, RED}, 17},         // rwr subtle ⭐
-    {30000, 127, 75,  PATTERN_GRADIENT,    {BLUE, 0x8080FF, BLUE}, 75},    // blue smooth ⭐
-    {30000, 127, 160, PATTERN_MINI_TWINKLE, {RED, WHITE, BLUE}, 160},      // rwb twinkle
-    {30000, 63,  65,  PATTERN_CANDY_CANE,  {RED, WHITE, GREEN}, 255},      // rwg candy
-    {30000, 63,  100, PATTERN_CANDY_CANE,  {RED, WHITE, RED}, 255},        // rwr candy
-    {30000, 127, 100, PATTERN_FIXED,       {RED, WHITE, GREEN}, 255},      // rwg tree
-    {30000, 127, 127, PATTERN_MARCH,       {RED, WHITE, GREEN}, 8},        // rwg march
-    {30000, 127, 127, PATTERN_WIPE,        {RED, WHITE, GREEN}, 8},        // rwg wipe
-    {30000, 127, 255, PATTERN_MINI_SPARKLE, {RED, WHITE, GREEN}, 9},       // rwg flicker
-    // Idle step as last step (like Arduino)
-    {0,     20,  35,  PATTERN_GRADIENT,    {RED, WHITE, GREEN}, 17},       // idle step
+    {30000, 67, 160, PATTERN_MINI_TWINKLE, {RED, WHITE, YELLOW}, 160},    // rwy twinkle
+    {30000, 67, 160, PATTERN_MINI_TWINKLE, {RED, WHITE, GREEN}, 160},     // rwg twinkle
+    {30000, 67, 35,  PATTERN_GRADIENT,    {RED, WHITE, RED}, 17},         // rwr subtle
+    {30000, 67, 75,  PATTERN_GRADIENT,    {BLUE, 0x8080FF, BLUE}, 75},    // blue smooth
+    {30000, 67, 160, PATTERN_MINI_TWINKLE, {RED, WHITE, BLUE}, 160},      // rwb twinkle
+    {30000, 67, 65,  PATTERN_CANDY_CANE,  {RED, WHITE, GREEN}, 255},      // rwg candy
+    {30000, 67, 100, PATTERN_CANDY_CANE,  {RED, WHITE, RED}, 255},        // rwr candy
+    {30000, 67, 100, PATTERN_FIXED,       {RED, WHITE, GREEN}, 255},      // rwg tree
+    {30000, 67, 127, PATTERN_MARCH,       {RED, WHITE, GREEN}, 8},        // rwg march
+    {30000, 67, 127, PATTERN_WIPE,        {RED, WHITE, GREEN}, 8},        // rwg wipe
+    {30000, 67, 255, PATTERN_MINI_SPARKLE, {RED, WHITE, GREEN}, 9},       // rwg flicker
+    // Idle step as last step
+    {0,     35, 35,  PATTERN_GRADIENT,    {RED, WHITE, GREEN}, 17},       // idle step
 };
 
 RandomSequence::RandomSequence() 
@@ -102,17 +101,17 @@ void ParameterizedSequence::createSteps(uint32_t primaryColor, uint32_t secondar
         return;
     }
     
-    // Step 1: Flash - 4 seconds duration, primary color, Flash pattern (ESP32C3 power-safe brightness)
-    dynamicSteps[0] = {4000, 200, 100, PATTERN_FLASH, {primaryColor, primaryColor, primaryColor}, 200};
-    
-    // Step 2: March - 60 seconds duration, primary color, March pattern
-    dynamicSteps[1] = {60000, 200, 40, PATTERN_MARCH, {primaryColor, primaryColor, primaryColor}, 34};
-    
-    // Step 3: MiniTwinkle - 60 seconds duration, primary + secondary colors, MiniTwinkle pattern
-    dynamicSteps[2] = {60000, 200, 100, PATTERN_MINI_TWINKLE, {primaryColor, secondaryColor, primaryColor}, 75};
-    
-    // Step 4: Gradient - permanent (0ms), primary + secondary colors, Gradient pattern
-    dynamicSteps[3] = {0, 127, 75, PATTERN_GRADIENT, {primaryColor, secondaryColor, primaryColor}, 75};
+    // Step 1: Flash - 4 seconds duration, attention-grabbing brightness 80
+    dynamicSteps[0] = {4000, 80, 100, PATTERN_FLASH, {primaryColor, primaryColor, primaryColor}, 200};
+
+    // Step 2: March - 60 seconds duration, sustained brightness 67
+    dynamicSteps[1] = {60000, 67, 40, PATTERN_MARCH, {primaryColor, primaryColor, primaryColor}, 34};
+
+    // Step 3: MiniTwinkle - 60 seconds duration, sustained brightness 67
+    dynamicSteps[2] = {60000, 67, 100, PATTERN_MINI_TWINKLE, {primaryColor, secondaryColor, primaryColor}, 75};
+
+    // Step 4: Gradient - permanent (0ms), sustained brightness 67
+    dynamicSteps[3] = {0, 67, 75, PATTERN_GRADIENT, {primaryColor, secondaryColor, primaryColor}, 75};
     
     ESP_LOGI(TAG, "ParameterizedSequence: 4 steps created (Flash->March->MiniTwinkle->Gradient)");
 }
@@ -141,19 +140,19 @@ void SingleRandomSequence::createRandomStep() {
         return;
     }
     
-    // Available random patterns (excluding idle step)
+    // Available random patterns - normal brightness 67
     static const Step available_patterns[] = {
-        {30000, 127, 160, PATTERN_MINI_TWINKLE, {RED, WHITE, YELLOW}, 160},    // rwy twinkle
-        {30000, 127, 160, PATTERN_MINI_TWINKLE, {RED, WHITE, GREEN}, 160},     // rwg twinkle  
-        {30000, 127, 35,  PATTERN_GRADIENT,    {RED, WHITE, RED}, 17},         // rwr subtle
-        {30000, 127, 75,  PATTERN_GRADIENT,    {BLUE, 0x8080FF, BLUE}, 75},    // blue smooth
-        {30000, 127, 160, PATTERN_MINI_TWINKLE, {RED, WHITE, BLUE}, 160},      // rwb twinkle
-        {30000, 63,  65,  PATTERN_CANDY_CANE,  {RED, WHITE, GREEN}, 255},      // rwg candy
-        {30000, 63,  100, PATTERN_CANDY_CANE,  {RED, WHITE, RED}, 255},        // rwr candy
-        {30000, 127, 100, PATTERN_FIXED,       {RED, WHITE, GREEN}, 255},      // rwg tree
-        {30000, 127, 127, PATTERN_MARCH,       {RED, WHITE, GREEN}, 8},        // rwg march
-        {30000, 127, 127, PATTERN_WIPE,        {RED, WHITE, GREEN}, 8},        // rwg wipe
-        {30000, 127, 255, PATTERN_MINI_SPARKLE, {RED, WHITE, GREEN}, 9},       // rwg flicker
+        {30000, 67, 160, PATTERN_MINI_TWINKLE, {RED, WHITE, YELLOW}, 160},    // rwy twinkle
+        {30000, 67, 160, PATTERN_MINI_TWINKLE, {RED, WHITE, GREEN}, 160},     // rwg twinkle
+        {30000, 67, 35,  PATTERN_GRADIENT,    {RED, WHITE, RED}, 17},         // rwr subtle
+        {30000, 67, 75,  PATTERN_GRADIENT,    {BLUE, 0x8080FF, BLUE}, 75},    // blue smooth
+        {30000, 67, 160, PATTERN_MINI_TWINKLE, {RED, WHITE, BLUE}, 160},      // rwb twinkle
+        {30000, 67, 65,  PATTERN_CANDY_CANE,  {RED, WHITE, GREEN}, 255},      // rwg candy
+        {30000, 67, 100, PATTERN_CANDY_CANE,  {RED, WHITE, RED}, 255},        // rwr candy
+        {30000, 67, 100, PATTERN_FIXED,       {RED, WHITE, GREEN}, 255},      // rwg tree
+        {30000, 67, 127, PATTERN_MARCH,       {RED, WHITE, GREEN}, 8},        // rwg march
+        {30000, 67, 127, PATTERN_WIPE,        {RED, WHITE, GREEN}, 8},        // rwg wipe
+        {30000, 67, 255, PATTERN_MINI_SPARKLE, {RED, WHITE, GREEN}, 9},       // rwg flicker
     };
     
     // Pick random pattern (11 patterns available) and modify duration to be permanent
