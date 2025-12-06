@@ -74,20 +74,14 @@ Power Considerations:
 - USB Power (5V, 1A): Max ~50 LEDs at full brightness  
 - External 5V Power: Scale according to supply (60mA per LED at full white)
 
-NOTE: ESP32-C3 Brightness Limitation (Ongoing Work)
+NOTE: Brightness Levels for Power Safety
 
-The ESP32-C3 implementation currently limits maximum brightness to 110 (out of 255) to prevent system resets caused by power limitations. This limitation is applied automatically in firmware and affects all brightness sources (mobile app, patterns, button feedback).
+All patterns use reduced brightness levels to prevent power-related resets and ensure stable operation:
+- **Idle patterns**: Brightness 35 (low power consumption)
+- **Normal patterns**: Brightness 67 (balanced visibility and power)
+- **Flash/Alert patterns**: Brightness 80 (attention-grabbing, short duration)
 
-Technical Details:
-- Boost Converter: TPS61322A with ~2.9A switch current limit
-- Maximum Output Current: ~1.6A at low battery voltage (3.2V)
-- LED Current Calculation: 1600mA ÷ 60 LEDs = ~26.6mA per LED
-- Safe Brightness: (26.6mA ÷ 60mA) × 255 = 113 → 110 with safety margin
-- Power Budget: Designed for 60 LEDs × 26.6mA = 1596mA total
-
-Current Status: We are investigating optimal LED specifications and power requirements to determine if this is the intended operational range or if adjustments to the LED count/configuration are needed. This brightness limit ensures stable operation across the entire battery discharge cycle (4.2V to 3.2V).
-
-Impact: ESP32 platforms maintain full 255 brightness range. Only ESP32-C3 is affected by this limitation.
+These brightness values are set directly in the pattern definitions (`sequence.cpp`) rather than using runtime clamping, which provides more predictable power consumption and allows patterns like Flash and Strobe to use soft ramp-up techniques to prevent inrush current spikes.
 
 Memory Considerations:
 - ESP32-C3: Recommended max 60 LEDs (shown in code)
@@ -158,9 +152,8 @@ void inspect_runtime_state() {
     ESP_LOGI("Setup", "Adaptive mesh enabled: %s",
              mesh.isAdaptiveMeshEnabled() ? "yes" : "no");
 
-    auto& leds = GlobalObjects::getLEDController();
-    ESP_LOGI("Setup", "LED count: %u, pin: %u",
-             leds.getLedCount(), leds.getLedPin());
+    auto& strip = GlobalObjects::getLEDStrip();
+    ESP_LOGI("Setup", "LED count: %u", strip.numPixels());
 }
 ```
 
