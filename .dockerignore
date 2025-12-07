@@ -1,0 +1,23 @@
+# Build outputs
+build/
+release/
+
+# IDE files
+.vscode/
+.idea/
+*.code-workspace
+
+# Git
+.git/
+.gitignore
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Session/docs
+docs/session/
+
+# Local config
+sdkconfig
+sdkconfig.old
