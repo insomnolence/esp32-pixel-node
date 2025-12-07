@@ -41,3 +41,10 @@ dependencies.lock
 # VSCode
 .vscode/
 .clangd/
+
+# Docker build output
+release/
+
+# Backup files
+*.backup
+*.local-backup
