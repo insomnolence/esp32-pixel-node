@@ -2,6 +2,7 @@
 
 #include "led/led_strip_interface.h"
 #include "led/led_strip.h" // Keep for LEDStrip concrete type visibility if needed by others, or remove if possible
+#include "led/led_config.h" // Centralized brightness and pattern configuration
 #include "led/player.h"
 #include "led/sequence.h"
 #include "packet/generic_packet.h"
@@ -19,20 +20,13 @@
 #define DEFAULT_LED_PIN 7   // ESP32C3 board
 #define DEFAULT_LED_COUNT 60  // ESP32C3: Reduced count to prevent power-related resets
 #elif CONFIG_IDF_TARGET_ESP32
-#define DEFAULT_LED_PIN 12  // ESP32 board  
+#define DEFAULT_LED_PIN 12  // ESP32 board
 #define DEFAULT_LED_COUNT 144 // ESP32: Full strip
 #else
 #define DEFAULT_LED_PIN 7   // Default fallback
 #define DEFAULT_LED_COUNT 144 // Default: Full strip
 #endif
 #define PHYSICAL_LED_STRIP_LENGTH 144  // Total LEDs on physical strip (for clearing extras)
-
-// TEMPORARY SOLUTION: Hardware power safety limits for ESP32-C3
-// TODO: Replace with dynamic power management based on actual power requirements analysis
-// FIXME: Investigate if component selection (TPS61322A boost converter) allows higher brightness
-#ifdef CONFIG_IDF_TARGET_ESP32C3
-#define HARDWARE_MAX_BRIGHTNESS_ESP32C3 110  // TPS61322A safe limit (~1.6A max output)
-#endif
 
 // Dual-core processing message types
 enum class LEDCommandType {

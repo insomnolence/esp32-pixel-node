@@ -1,4 +1,5 @@
 #include "led/sequence.h"
+#include "led/led_config.h"
 #include "esp_random.h"
 #include "led/led_strip.h" // For color constants
 #include "esp_log.h"
@@ -8,7 +9,7 @@ static const char* TAG = "Sequence";
 
 // IdleSequence implementation - Red-White-Green gradient with slow speed
 static const Step idle_steps[] = {
-    {0, 35, 35, PATTERN_GRADIENT, {RED, WHITE, GREEN}, 17},      // Idle: brightness 35
+    {LED_DURATION_PERMANENT, LED_BRIGHTNESS_IDLE, LED_SPEED_SLOW, PATTERN_GRADIENT, {RED, WHITE, GREEN}, 17},
 };
 
 IdleSequence::IdleSequence() 
@@ -16,16 +17,16 @@ IdleSequence::IdleSequence()
     ESP_LOGI(TAG, "IdleSequence created with %d steps (Arduino-compatible)", stepCount);
 }
 
-// AlertSequence implementation  
+// AlertSequence implementation
 static const Step alert_steps[] = {
-    // High intensity alert patterns
-    {500,  255, 100, PATTERN_FLASH,   {RED, WHITE, BLACK}, 255},         // 0.5s red flash
-    {300,  255, 150, PATTERN_STROBE,  {RED, BLACK, BLACK}, 255},         // 0.3s red strobe
-    {500,  255, 100, PATTERN_FLASH,   {RED, WHITE, BLACK}, 255},         // 0.5s red flash
-    {1000, 200, 80,  PATTERN_FIXED,   {RED, BLACK, BLACK}, 200},         // 1s dim red hold
-    {500,  255, 120, PATTERN_WIPE,    {WHITE, RED, BLACK}, 255},         // 0.5s white wipe
-    {300,  255, 150, PATTERN_STROBE,  {WHITE, BLACK, BLACK}, 255},       // 0.3s white strobe
-    {2000, 100, 50,  PATTERN_MINI_TWINKLE, {RED, YELLOW, BLACK}, 100},   // 2s warning twinkle
+    // Alert patterns - all capped to LED_BRIGHTNESS_ALERT for power safety
+    {LED_DURATION_FLASH_MEDIUM, LED_BRIGHTNESS_ALERT, LED_SPEED_FAST,      PATTERN_FLASH,       {RED, WHITE, BLACK}, 255},
+    {LED_DURATION_FLASH_SHORT,  LED_BRIGHTNESS_ALERT, LED_SPEED_VERY_FAST, PATTERN_STROBE,      {RED, BLACK, BLACK}, 255},
+    {LED_DURATION_FLASH_MEDIUM, LED_BRIGHTNESS_ALERT, LED_SPEED_FAST,      PATTERN_FLASH,       {RED, WHITE, BLACK}, 255},
+    {LED_DURATION_HOLD,         LED_BRIGHTNESS_NORMAL, LED_SPEED_MEDIUM,   PATTERN_FIXED,       {RED, BLACK, BLACK}, 200},
+    {LED_DURATION_FLASH_MEDIUM, LED_BRIGHTNESS_ALERT, LED_SPEED_FAST,      PATTERN_WIPE,        {WHITE, RED, BLACK}, 255},
+    {LED_DURATION_FLASH_SHORT,  LED_BRIGHTNESS_ALERT, LED_SPEED_VERY_FAST, PATTERN_STROBE,      {WHITE, BLACK, BLACK}, 255},
+    {LED_DURATION_EXTENDED,     LED_BRIGHTNESS_NORMAL, LED_SPEED_SLOW,     PATTERN_MINI_TWINKLE, {RED, YELLOW, BLACK}, 100},
 };
 
 AlertSequence::AlertSequence() 
@@ -33,21 +34,21 @@ AlertSequence::AlertSequence()
     ESP_LOGI(TAG, "AlertSequence created with %d steps", stepCount);
 }
 
-// RandomSequence implementation - normal patterns at brightness 67
+// RandomSequence implementation - normal patterns at LED_BRIGHTNESS_NORMAL
 static const Step random_steps[] = {
-    {30000, 67, 160, PATTERN_MINI_TWINKLE, {RED, WHITE, YELLOW}, 160},    // rwy twinkle
-    {30000, 67, 160, PATTERN_MINI_TWINKLE, {RED, WHITE, GREEN}, 160},     // rwg twinkle
-    {30000, 67, 35,  PATTERN_GRADIENT,    {RED, WHITE, RED}, 17},         // rwr subtle
-    {30000, 67, 75,  PATTERN_GRADIENT,    {BLUE, 0x8080FF, BLUE}, 75},    // blue smooth
-    {30000, 67, 160, PATTERN_MINI_TWINKLE, {RED, WHITE, BLUE}, 160},      // rwb twinkle
-    {30000, 67, 65,  PATTERN_CANDY_CANE,  {RED, WHITE, GREEN}, 255},      // rwg candy
-    {30000, 67, 100, PATTERN_CANDY_CANE,  {RED, WHITE, RED}, 255},        // rwr candy
-    {30000, 67, 100, PATTERN_FIXED,       {RED, WHITE, GREEN}, 255},      // rwg tree
-    {30000, 67, 127, PATTERN_MARCH,       {RED, WHITE, GREEN}, 8},        // rwg march
-    {30000, 67, 127, PATTERN_WIPE,        {RED, WHITE, GREEN}, 8},        // rwg wipe
-    {30000, 67, 255, PATTERN_MINI_SPARKLE, {RED, WHITE, GREEN}, 9},       // rwg flicker
+    {LED_DURATION_STANDARD, LED_BRIGHTNESS_NORMAL, 160, PATTERN_MINI_TWINKLE, {RED, WHITE, YELLOW}, 160},  // rwy twinkle
+    {LED_DURATION_STANDARD, LED_BRIGHTNESS_NORMAL, 160, PATTERN_MINI_TWINKLE, {RED, WHITE, GREEN}, 160},   // rwg twinkle
+    {LED_DURATION_STANDARD, LED_BRIGHTNESS_NORMAL, LED_SPEED_SLOW, PATTERN_GRADIENT, {RED, WHITE, RED}, 17}, // rwr subtle
+    {LED_DURATION_STANDARD, LED_BRIGHTNESS_NORMAL, LED_SPEED_MEDIUM, PATTERN_GRADIENT, {BLUE, 0x8080FF, BLUE}, 75}, // blue smooth
+    {LED_DURATION_STANDARD, LED_BRIGHTNESS_NORMAL, 160, PATTERN_MINI_TWINKLE, {RED, WHITE, BLUE}, 160},    // rwb twinkle
+    {LED_DURATION_STANDARD, LED_BRIGHTNESS_NORMAL, 65,  PATTERN_CANDY_CANE,  {RED, WHITE, GREEN}, 255},    // rwg candy
+    {LED_DURATION_STANDARD, LED_BRIGHTNESS_NORMAL, LED_SPEED_FAST, PATTERN_CANDY_CANE, {RED, WHITE, RED}, 255}, // rwr candy
+    {LED_DURATION_STANDARD, LED_BRIGHTNESS_NORMAL, LED_SPEED_FAST, PATTERN_FIXED, {RED, WHITE, GREEN}, 255}, // rwg tree
+    {LED_DURATION_STANDARD, LED_BRIGHTNESS_NORMAL, 127, PATTERN_MARCH,       {RED, WHITE, GREEN}, 8},      // rwg march
+    {LED_DURATION_STANDARD, LED_BRIGHTNESS_NORMAL, 127, PATTERN_WIPE,        {RED, WHITE, GREEN}, 8},      // rwg wipe
+    {LED_DURATION_STANDARD, LED_BRIGHTNESS_NORMAL, 255, PATTERN_MINI_SPARKLE, {RED, WHITE, GREEN}, 9},     // rwg flicker
     // Idle step as last step
-    {0,     35, 35,  PATTERN_GRADIENT,    {RED, WHITE, GREEN}, 17},       // idle step
+    {LED_DURATION_PERMANENT, LED_BRIGHTNESS_IDLE, LED_SPEED_SLOW, PATTERN_GRADIENT, {RED, WHITE, GREEN}, 17},
 };
 
 RandomSequence::RandomSequence() 
@@ -101,17 +102,17 @@ void ParameterizedSequence::createSteps(uint32_t primaryColor, uint32_t secondar
         return;
     }
     
-    // Step 1: Flash - 4 seconds duration, attention-grabbing brightness 80
-    dynamicSteps[0] = {4000, 80, 100, PATTERN_FLASH, {primaryColor, primaryColor, primaryColor}, 200};
+    // Step 1: Flash - 4 seconds duration, attention-grabbing
+    dynamicSteps[0] = {4000, LED_BRIGHTNESS_ATTENTION, LED_SPEED_FAST, PATTERN_FLASH, {primaryColor, primaryColor, primaryColor}, 200};
 
-    // Step 2: March - 60 seconds duration, sustained brightness 67
-    dynamicSteps[1] = {60000, 67, 40, PATTERN_MARCH, {primaryColor, primaryColor, primaryColor}, 34};
+    // Step 2: March - 60 seconds duration, sustained brightness
+    dynamicSteps[1] = {60000, LED_BRIGHTNESS_NORMAL, 40, PATTERN_MARCH, {primaryColor, primaryColor, primaryColor}, 34};
 
-    // Step 3: MiniTwinkle - 60 seconds duration, sustained brightness 67
-    dynamicSteps[2] = {60000, 67, 100, PATTERN_MINI_TWINKLE, {primaryColor, secondaryColor, primaryColor}, 75};
+    // Step 3: MiniTwinkle - 60 seconds duration, sustained brightness
+    dynamicSteps[2] = {60000, LED_BRIGHTNESS_NORMAL, LED_SPEED_FAST, PATTERN_MINI_TWINKLE, {primaryColor, secondaryColor, primaryColor}, 75};
 
-    // Step 4: Gradient - permanent (0ms), sustained brightness 67
-    dynamicSteps[3] = {0, 67, 75, PATTERN_GRADIENT, {primaryColor, secondaryColor, primaryColor}, 75};
+    // Step 4: Gradient - permanent (0ms), sustained brightness
+    dynamicSteps[3] = {LED_DURATION_PERMANENT, LED_BRIGHTNESS_NORMAL, LED_SPEED_MEDIUM, PATTERN_GRADIENT, {primaryColor, secondaryColor, primaryColor}, 75};
     
     ESP_LOGI(TAG, "ParameterizedSequence: 4 steps created (Flash->March->MiniTwinkle->Gradient)");
 }
@@ -140,19 +141,19 @@ void SingleRandomSequence::createRandomStep() {
         return;
     }
     
-    // Available random patterns - normal brightness 67
+    // Available random patterns - normal brightness
     static const Step available_patterns[] = {
-        {30000, 67, 160, PATTERN_MINI_TWINKLE, {RED, WHITE, YELLOW}, 160},    // rwy twinkle
-        {30000, 67, 160, PATTERN_MINI_TWINKLE, {RED, WHITE, GREEN}, 160},     // rwg twinkle
-        {30000, 67, 35,  PATTERN_GRADIENT,    {RED, WHITE, RED}, 17},         // rwr subtle
-        {30000, 67, 75,  PATTERN_GRADIENT,    {BLUE, 0x8080FF, BLUE}, 75},    // blue smooth
-        {30000, 67, 160, PATTERN_MINI_TWINKLE, {RED, WHITE, BLUE}, 160},      // rwb twinkle
-        {30000, 67, 65,  PATTERN_CANDY_CANE,  {RED, WHITE, GREEN}, 255},      // rwg candy
-        {30000, 67, 100, PATTERN_CANDY_CANE,  {RED, WHITE, RED}, 255},        // rwr candy
-        {30000, 67, 100, PATTERN_FIXED,       {RED, WHITE, GREEN}, 255},      // rwg tree
-        {30000, 67, 127, PATTERN_MARCH,       {RED, WHITE, GREEN}, 8},        // rwg march
-        {30000, 67, 127, PATTERN_WIPE,        {RED, WHITE, GREEN}, 8},        // rwg wipe
-        {30000, 67, 255, PATTERN_MINI_SPARKLE, {RED, WHITE, GREEN}, 9},       // rwg flicker
+        {LED_DURATION_STANDARD, LED_BRIGHTNESS_NORMAL, 160, PATTERN_MINI_TWINKLE, {RED, WHITE, YELLOW}, 160},  // rwy twinkle
+        {LED_DURATION_STANDARD, LED_BRIGHTNESS_NORMAL, 160, PATTERN_MINI_TWINKLE, {RED, WHITE, GREEN}, 160},   // rwg twinkle
+        {LED_DURATION_STANDARD, LED_BRIGHTNESS_NORMAL, LED_SPEED_SLOW, PATTERN_GRADIENT, {RED, WHITE, RED}, 17}, // rwr subtle
+        {LED_DURATION_STANDARD, LED_BRIGHTNESS_NORMAL, LED_SPEED_MEDIUM, PATTERN_GRADIENT, {BLUE, 0x8080FF, BLUE}, 75}, // blue smooth
+        {LED_DURATION_STANDARD, LED_BRIGHTNESS_NORMAL, 160, PATTERN_MINI_TWINKLE, {RED, WHITE, BLUE}, 160},    // rwb twinkle
+        {LED_DURATION_STANDARD, LED_BRIGHTNESS_NORMAL, 65,  PATTERN_CANDY_CANE,  {RED, WHITE, GREEN}, 255},    // rwg candy
+        {LED_DURATION_STANDARD, LED_BRIGHTNESS_NORMAL, LED_SPEED_FAST, PATTERN_CANDY_CANE, {RED, WHITE, RED}, 255}, // rwr candy
+        {LED_DURATION_STANDARD, LED_BRIGHTNESS_NORMAL, LED_SPEED_FAST, PATTERN_FIXED, {RED, WHITE, GREEN}, 255}, // rwg tree
+        {LED_DURATION_STANDARD, LED_BRIGHTNESS_NORMAL, 127, PATTERN_MARCH,       {RED, WHITE, GREEN}, 8},      // rwg march
+        {LED_DURATION_STANDARD, LED_BRIGHTNESS_NORMAL, 127, PATTERN_WIPE,        {RED, WHITE, GREEN}, 8},      // rwg wipe
+        {LED_DURATION_STANDARD, LED_BRIGHTNESS_NORMAL, 255, PATTERN_MINI_SPARKLE, {RED, WHITE, GREEN}, 9},     // rwg flicker
     };
     
     // Pick random pattern (11 patterns available) and modify duration to be permanent
