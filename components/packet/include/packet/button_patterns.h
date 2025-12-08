@@ -1,6 +1,7 @@
 #pragma once
 
 #include "packet/packet.h"
+#include "led/led_config.h"
 #include <stdint.h>
 
 // Color constants (RGB format: 0xRRGGBB)
@@ -42,8 +43,8 @@ namespace ButtonPatterns {
 inline Packet getWarningPattern() {
     return Packet{
         .command = BUTTON_PATTERN_COMMAND,
-        .brightness = 127,
-        .speed = 75,
+        .brightness = LED_BRIGHTNESS_ALERT,
+        .speed = LED_SPEED_MEDIUM,
         .pattern = PATTERN_ID_GRADIENT,
         .color = {PATTERN_COLOR_YELLOW, 0xFFFC40, PATTERN_COLOR_YELLOW},
         .level = {0, 0, 0}
@@ -56,8 +57,8 @@ inline Packet getWarningPattern() {
 inline Packet getExitPattern() {
     return Packet{
         .command = BUTTON_PATTERN_COMMAND,
-        .brightness = 127,
-        .speed = 75,
+        .brightness = LED_BRIGHTNESS_ALERT,
+        .speed = LED_SPEED_MEDIUM,
         .pattern = PATTERN_ID_GRADIENT,
         .color = {PATTERN_COLOR_RED, 0xFF4040, PATTERN_COLOR_RED},
         .level = {0, 0, 0}
@@ -70,8 +71,8 @@ inline Packet getExitPattern() {
 inline Packet getIdlePattern() {
     return Packet{
         .command = BUTTON_PATTERN_COMMAND,
-        .brightness = 20,
-        .speed = 35,
+        .brightness = LED_BRIGHTNESS_IDLE,
+        .speed = LED_SPEED_SLOW,
         .pattern = PATTERN_ID_GRADIENT,
         .color = {PATTERN_COLOR_RED, PATTERN_COLOR_WHITE, PATTERN_COLOR_GREEN},
         .level = {0, 0, 0}
@@ -82,50 +83,50 @@ inline Packet getIdlePattern() {
 // These match the patterns in SingleRandomSequence
 
 inline Packet getRandomPattern(int index) {
-    // Available random patterns
+    // Available random patterns - all use LED_BRIGHTNESS_NORMAL
     static const Packet patterns[] = {
         // Pattern 0: RWY twinkle
-        {BUTTON_PATTERN_COMMAND, 127, 160, PATTERN_ID_MINI_TWINKLE,
+        {BUTTON_PATTERN_COMMAND, LED_BRIGHTNESS_NORMAL, 160, PATTERN_ID_MINI_TWINKLE,
          {PATTERN_COLOR_RED, PATTERN_COLOR_WHITE, PATTERN_COLOR_YELLOW}, {160, 0, 0}},
 
         // Pattern 1: RWG twinkle
-        {BUTTON_PATTERN_COMMAND, 127, 160, PATTERN_ID_MINI_TWINKLE,
+        {BUTTON_PATTERN_COMMAND, LED_BRIGHTNESS_NORMAL, 160, PATTERN_ID_MINI_TWINKLE,
          {PATTERN_COLOR_RED, PATTERN_COLOR_WHITE, PATTERN_COLOR_GREEN}, {160, 0, 0}},
 
         // Pattern 2: RWR subtle gradient
-        {BUTTON_PATTERN_COMMAND, 127, 35, PATTERN_ID_GRADIENT,
+        {BUTTON_PATTERN_COMMAND, LED_BRIGHTNESS_NORMAL, LED_SPEED_SLOW, PATTERN_ID_GRADIENT,
          {PATTERN_COLOR_RED, PATTERN_COLOR_WHITE, PATTERN_COLOR_RED}, {17, 0, 0}},
 
         // Pattern 3: Blue smooth gradient
-        {BUTTON_PATTERN_COMMAND, 127, 75, PATTERN_ID_GRADIENT,
+        {BUTTON_PATTERN_COMMAND, LED_BRIGHTNESS_NORMAL, LED_SPEED_MEDIUM, PATTERN_ID_GRADIENT,
          {PATTERN_COLOR_BLUE, 0x8080FF, PATTERN_COLOR_BLUE}, {75, 0, 0}},
 
         // Pattern 4: RWB twinkle
-        {BUTTON_PATTERN_COMMAND, 127, 160, PATTERN_ID_MINI_TWINKLE,
+        {BUTTON_PATTERN_COMMAND, LED_BRIGHTNESS_NORMAL, 160, PATTERN_ID_MINI_TWINKLE,
          {PATTERN_COLOR_RED, PATTERN_COLOR_WHITE, PATTERN_COLOR_BLUE}, {160, 0, 0}},
 
         // Pattern 5: RWG candy cane
-        {BUTTON_PATTERN_COMMAND, 63, 65, PATTERN_ID_CANDY_CANE,
+        {BUTTON_PATTERN_COMMAND, LED_BRIGHTNESS_NORMAL, 65, PATTERN_ID_CANDY_CANE,
          {PATTERN_COLOR_RED, PATTERN_COLOR_WHITE, PATTERN_COLOR_GREEN}, {255, 0, 0}},
 
         // Pattern 6: RWR candy cane
-        {BUTTON_PATTERN_COMMAND, 63, 100, PATTERN_ID_CANDY_CANE,
+        {BUTTON_PATTERN_COMMAND, LED_BRIGHTNESS_NORMAL, LED_SPEED_FAST, PATTERN_ID_CANDY_CANE,
          {PATTERN_COLOR_RED, PATTERN_COLOR_WHITE, PATTERN_COLOR_RED}, {255, 0, 0}},
 
         // Pattern 7: RWG fixed (tree)
-        {BUTTON_PATTERN_COMMAND, 127, 100, PATTERN_ID_FIXED,
+        {BUTTON_PATTERN_COMMAND, LED_BRIGHTNESS_NORMAL, LED_SPEED_FAST, PATTERN_ID_FIXED,
          {PATTERN_COLOR_RED, PATTERN_COLOR_WHITE, PATTERN_COLOR_GREEN}, {255, 0, 0}},
 
         // Pattern 8: RWG march
-        {BUTTON_PATTERN_COMMAND, 127, 127, PATTERN_ID_MARCH,
+        {BUTTON_PATTERN_COMMAND, LED_BRIGHTNESS_NORMAL, 127, PATTERN_ID_MARCH,
          {PATTERN_COLOR_RED, PATTERN_COLOR_WHITE, PATTERN_COLOR_GREEN}, {8, 0, 0}},
 
         // Pattern 9: RWG wipe
-        {BUTTON_PATTERN_COMMAND, 127, 127, PATTERN_ID_WIPE,
+        {BUTTON_PATTERN_COMMAND, LED_BRIGHTNESS_NORMAL, 127, PATTERN_ID_WIPE,
          {PATTERN_COLOR_RED, PATTERN_COLOR_WHITE, PATTERN_COLOR_GREEN}, {8, 0, 0}},
 
         // Pattern 10: RWG sparkle
-        {BUTTON_PATTERN_COMMAND, 127, 255, PATTERN_ID_MINI_SPARKLE,
+        {BUTTON_PATTERN_COMMAND, LED_BRIGHTNESS_NORMAL, 255, PATTERN_ID_MINI_SPARKLE,
          {PATTERN_COLOR_RED, PATTERN_COLOR_WHITE, PATTERN_COLOR_GREEN}, {9, 0, 0}},
     };
 

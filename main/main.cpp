@@ -24,6 +24,7 @@
 
 #include "esp_log.h"
 #include "esp_random.h"
+#include "esp_system.h"
 
 // Stack optimization utilities
 #include "system_control/global_objects.h"
@@ -37,6 +38,22 @@
 
 
 extern "C" void app_main(void) {
+    // 🔄 RESET REASON: Log why we rebooted (critical for battery debugging)
+    esp_reset_reason_t reset_reason = esp_reset_reason();
+    ESP_LOGW(MAIN_TAG, "Reset reason: %d (%s)", reset_reason,
+        reset_reason == ESP_RST_POWERON ? "POWER_ON - normal boot" :
+        reset_reason == ESP_RST_SW ? "SOFTWARE - esp_restart() called" :
+        reset_reason == ESP_RST_PANIC ? "PANIC - software crash" :
+        reset_reason == ESP_RST_INT_WDT ? "INT_WDT - interrupt watchdog" :
+        reset_reason == ESP_RST_TASK_WDT ? "TASK_WDT - task watchdog" :
+        reset_reason == ESP_RST_WDT ? "WDT - other watchdog" :
+        reset_reason == ESP_RST_DEEPSLEEP ? "DEEPSLEEP - woke from sleep" :
+        reset_reason == ESP_RST_BROWNOUT ? "BROWNOUT - voltage dropped below 2.51V" :
+        reset_reason == ESP_RST_USB ? "USB - reset by USB peripheral (normal)" :
+        reset_reason == ESP_RST_JTAG ? "JTAG - reset by JTAG" :
+        reset_reason == ESP_RST_PWR_GLITCH ? "PWR_GLITCH - power glitch detected" :
+        reset_reason == ESP_RST_CPU_LOCKUP ? "CPU_LOCKUP - double exception" : "UNKNOWN");
+
     // 📊 STACK OPTIMIZATION: Monitor initial stack usage
     ESP_LOGI(MAIN_TAG, "🚀 Starting ESP32 LED Mesh with heap-optimized architecture");
     LOG_CURRENT_STACK();

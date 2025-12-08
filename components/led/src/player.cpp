@@ -1,5 +1,6 @@
 #include "led/player.h"
 #include "led/led_strip.h"
+#include "led/led_config.h"
 #include "led/sequence.h"
 #include "led/pattern.h"
 #include "esp_log.h"
@@ -7,12 +8,6 @@
 #include <cstring>
 
 static const char* TAG = "Player";
-
-// Hardware-specific brightness limit for ESP32C3 to prevent brownouts/resets
-// The ESP32C3 dev board has limited power supply capability compared to S3/C6
-#ifdef CONFIG_IDF_TARGET_ESP32C3
-    #define HARDWARE_MAX_BRIGHTNESS_ESP32C3 100
-#endif
 
 Player::Player()
     : sequence(nullptr),
@@ -184,22 +179,8 @@ bool Player::UpdatePattern(led_time_t now, ILedStrip *strip) {
             // Ensure brightness is set BEFORE initializing pattern
             uint8_t brightness = sequence->GetBrightness(step);
             
-            // TEMPORARY SOLUTION: Apply hardware-specific brightness limiting for ESP32C3
-            uint8_t safe_brightness = brightness;
-#ifdef CONFIG_IDF_TARGET_ESP32C3
-            if (brightness > HARDWARE_MAX_BRIGHTNESS_ESP32C3) {
-                safe_brightness = HARDWARE_MAX_BRIGHTNESS_ESP32C3;
-                
-                static uint32_t last_warning_time_init = 0;
-                uint32_t current_time = esp_timer_get_time() / 1000;
-                if (current_time - last_warning_time_init > 5000) {
-                    ESP_LOGW(TAG, "⚡ TEMP LIMIT: Brightness %d capped to %d for ESP32C3 power safety", 
-                             brightness, safe_brightness);
-                    ESP_LOGW(TAG, "TODO: Review power system and component selection for higher brightness capability");
-                    last_warning_time_init = current_time;
-                }
-            }
-#endif
+            // Apply hardware-specific brightness limiting (see led_config.h)
+            uint8_t safe_brightness = LED_CLAMP_BRIGHTNESS(brightness);
             
             strip->setBrightness(safe_brightness);
             ESP_LOGI(TAG, "Set strip brightness to %d for new pattern", safe_brightness);
@@ -209,26 +190,9 @@ bool Player::UpdatePattern(led_time_t now, ILedStrip *strip) {
         }
     }
     
-    // Update strip brightness based on sequence
+    // Update strip brightness based on sequence (clamped to hardware max in led_config.h)
     uint8_t brightness = sequence->GetBrightness(step);
-    
-    // TEMPORARY SOLUTION: Apply hardware-specific brightness limiting for ESP32C3
-    uint8_t safe_brightness = brightness;
-#ifdef CONFIG_IDF_TARGET_ESP32C3
-    if (brightness > HARDWARE_MAX_BRIGHTNESS_ESP32C3) {
-        safe_brightness = HARDWARE_MAX_BRIGHTNESS_ESP32C3;
-        
-        static uint32_t last_warning_time = 0;
-        uint32_t current_time = esp_timer_get_time() / 1000;
-        if (current_time - last_warning_time > 5000) { // Log at most every 5 seconds
-            ESP_LOGW(TAG, "⚡ TEMP LIMIT: Brightness %d capped to %d for ESP32C3 power safety", 
-                     brightness, safe_brightness);
-            ESP_LOGW(TAG, "TODO: Review power system and component selection for higher brightness capability");
-            last_warning_time = current_time;
-        }
-    }
-#endif
-    
+    uint8_t safe_brightness = LED_CLAMP_BRIGHTNESS(brightness);
     strip->setBrightness(safe_brightness);
     
     xSemaphoreGive(updateMutex);
