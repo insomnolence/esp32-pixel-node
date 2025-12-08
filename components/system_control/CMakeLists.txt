@@ -22,6 +22,7 @@ idf_component_register(
         bluetooth
         common
         driver
+        esp_driver_gpio
         esp_system
         esp_timer
         freertos

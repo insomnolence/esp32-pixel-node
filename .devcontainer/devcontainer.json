@@ -1,0 +1,20 @@
+{
+	"name": "ESP-IDF",
+	"image": "espressif/idf:latest",
+	"customizations": {
+		"vscode": {
+			"settings": {
+				"terminal.integrated.defaultProfile.linux": "bash",
+				"idf.espIdfPath": "/opt/esp/idf",
+				"idf.toolsPath": "/opt/esp",
+				"idf.gitPath": "/usr/bin/git"
+			},
+			"extensions": [
+				"espressif.esp-idf-extension",
+				"espressif.esp-idf-web"
+			]
+		}
+	},
+	"runArgs": ["--privileged"],
+	"postCreateCommand": "apt-get update && apt-get install -y udev"
+}

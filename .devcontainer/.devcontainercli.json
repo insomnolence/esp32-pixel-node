@@ -1,0 +1,9 @@
+{
+	"dockerPath": "podman",
+	"containerEngine": {
+		"runArgs": [
+			"--privileged",
+			"--userns=keep-id"
+		]
+	}
+}
