@@ -1,10 +1,37 @@
 #pragma once
 
 #include <stdint.h>
+#include "sdkconfig.h"
 
 #define ESPNOW_MESH_MAX_PAYLOAD_LEN 250
 #define ESPNOW_MESH_DEFAULT_TTL 4
 #define ESPNOW_MESH_CHANNEL 6
+
+// =============================================================================
+// MESH TIMING CONSTANTS
+// Configurable via Kconfig with sensible defaults
+// =============================================================================
+
+// Time without hearing from root before considering it gone (default 15s)
+#ifdef CONFIG_MESH_ROOT_TIMEOUT_MS
+#define MESH_ROOT_TIMEOUT_MS CONFIG_MESH_ROOT_TIMEOUT_MS
+#else
+#define MESH_ROOT_TIMEOUT_MS 15000
+#endif
+
+// Time without hearing from BLE root before clearing network BLE status (default 30s)
+#ifdef CONFIG_MESH_BLE_ROOT_TIMEOUT_MS
+#define MESH_BLE_ROOT_TIMEOUT_MS CONFIG_MESH_BLE_ROOT_TIMEOUT_MS
+#else
+#define MESH_BLE_ROOT_TIMEOUT_MS 30000
+#endif
+
+// Cooldown after being displaced by another BLE root (default 5s)
+#ifdef CONFIG_MESH_DISPLACEMENT_COOLDOWN_MS
+#define MESH_DISPLACEMENT_COOLDOWN_MS CONFIG_MESH_DISPLACEMENT_COOLDOWN_MS
+#else
+#define MESH_DISPLACEMENT_COOLDOWN_MS 5000
+#endif
 
 enum class MeshPacketType : uint8_t {
     LED_PATTERN = 0x01,      // LED pattern/color updates
@@ -51,14 +78,4 @@ struct HeartbeatPacket {
     uint8_t has_ble_connection; // 1 if this node has active BLE connection
 } __attribute__((packed));
 
-// Legacy packet wrapper for compatibility
-struct ESPNowMeshPacket {
-    uint32_t packet_id;          
-    uint8_t packet_type;         
-    uint8_t ttl;                 
-    uint8_t source_mac[6];       
-    uint32_t timestamp;          
-    uint16_t data_len;           
-    uint32_t crc32;              
-    uint8_t data[ESPNOW_MESH_MAX_PAYLOAD_LEN - 24]; 
-} __attribute__((packed));
+

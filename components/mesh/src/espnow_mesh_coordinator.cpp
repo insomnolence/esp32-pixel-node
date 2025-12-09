@@ -263,6 +263,8 @@ esp_err_t ESPNowMeshCoordinator::sendLEDPattern(const GenericPacket& pattern) {
     size_t size = offsetof(LedPatternPacket, pattern_data) + packet.data_length;
 
     // Send LED pattern multiple times for reliability (ESP-NOW broadcasts can be lossy)
+    // Use random jitter between retransmissions to reduce collision probability
+    // when multiple nodes broadcast simultaneously
     esp_err_t ret = ESP_OK;
     for (int i = 0; i < 3; i++) {
         ret = broadcastPacket(&packet, size);
@@ -270,7 +272,8 @@ esp_err_t ESPNowMeshCoordinator::sendLEDPattern(const GenericPacket& pattern) {
             ESP_LOGW(TAG, "LED pattern broadcast attempt %d failed: %s", i + 1, esp_err_to_name(ret));
         }
         if (i < 2) {
-            vTaskDelay(pdMS_TO_TICKS(5)); // Small delay between retransmissions
+            // Random jitter: 3-7ms between retransmissions
+            vTaskDelay(pdMS_TO_TICKS(3 + (esp_random() % 5)));
         }
     }
     return ret;
@@ -324,7 +327,7 @@ void ESPNowMeshCoordinator::handleReceivedPacket(const uint8_t *mac_addr, const 
         if (len < sizeof(RootClaimPacket)) return;
         const RootClaimPacket* claim = (const RootClaimPacket*)data;
 
-        ESP_LOGI(TAG, "Received ROOT_CLAIM from %02X:%02X:%02X:%02X:%02X:%02X, reason: %d, my_role: %s, my_reason: %d",
+        ESP_LOGD(TAG, "Received ROOT_CLAIM from %02X:%02X:%02X:%02X:%02X:%02X, reason: %d, my_role: %s, my_reason: %d",
                  claim->node_id[0], claim->node_id[1], claim->node_id[2],
                  claim->node_id[3], claim->node_id[4], claim->node_id[5],
                  claim->reason, getRoleString(), (int)current_claim_reason);
@@ -334,7 +337,7 @@ void ESPNowMeshCoordinator::handleReceivedPacket(const uint8_t *mac_addr, const 
             network_has_ble_root = true;
             memcpy(ble_root_mac, claim->node_id, 6);
             last_ble_root_seen = hardware->getMillis();
-            ESP_LOGI(TAG, "BLE root detected from ROOT_CLAIM: %02X:%02X:%02X:%02X:%02X:%02X",
+            ESP_LOGD(TAG, "BLE root detected from ROOT_CLAIM: %02X:%02X:%02X:%02X:%02X:%02X",
                      claim->node_id[0], claim->node_id[1], claim->node_id[2],
                      claim->node_id[3], claim->node_id[4], claim->node_id[5]);
         }
@@ -378,7 +381,7 @@ void ESPNowMeshCoordinator::handleReceivedPacket(const uint8_t *mac_addr, const 
         // If we are the root, collect heartbeats to build network statistics
         if (isRootNode()) {
             updateNodeInfo(*heartbeat);
-            ESP_LOGI(TAG, "Root received heartbeat from %02X:%02X:%02X:%02X:%02X:%02X, neighbors: %d, has_ble: %d",
+            ESP_LOGD(TAG, "Root received heartbeat from %02X:%02X:%02X:%02X:%02X:%02X, neighbors: %d, has_ble: %d",
                      heartbeat->node_id[0], heartbeat->node_id[1], heartbeat->node_id[2],
                      heartbeat->node_id[3], heartbeat->node_id[4], heartbeat->node_id[5],
                      heartbeat->neighbor_count, heartbeat->has_ble_connection);
@@ -388,7 +391,7 @@ void ESPNowMeshCoordinator::handleReceivedPacket(const uint8_t *mac_addr, const 
                 heard_from_root = true;
                 last_root_announcement = hardware->getMillis();
             }
-            ESP_LOGI(TAG, "Client received heartbeat from %02X:%02X:%02X:%02X:%02X:%02X, has_ble: %d",
+            ESP_LOGD(TAG, "Client received heartbeat from %02X:%02X:%02X:%02X:%02X:%02X, has_ble: %d",
                      heartbeat->node_id[0], heartbeat->node_id[1], heartbeat->node_id[2],
                      heartbeat->node_id[3], heartbeat->node_id[4], heartbeat->node_id[5],
                      heartbeat->has_ble_connection);
@@ -463,7 +466,8 @@ void ESPNowMeshCoordinator::forwardPacket(const void* packet, size_t len) {
 
 uint32_t ESPNowMeshCoordinator::generatePacketId() {
     uint16_t node_part = node_id;
-    static uint16_t counter = 0;
+    // Initialize counter with random value to avoid collisions after rapid reboots
+    static uint16_t counter = (uint16_t)(esp_random() & 0xFFFF);
     
     // 32-bit ID: 16-bit Node ID | 16-bit Counter
     // Redesign says: (node_suffix << 16) | (counter++)
@@ -593,9 +597,9 @@ void ESPNowMeshCoordinator::checkForRootElection() {
         neighbor_tracker->cleanup(); // Triggers cleanup of old neighbors
     }
 
-    // Check if BLE root has disappeared (15 second timeout)
-    if (network_has_ble_root && (current_time - last_ble_root_seen > 15000)) {
-        ESP_LOGI(TAG, "BLE root timeout (15s) - clearing network BLE status");
+    // Check if BLE root has disappeared
+    if (network_has_ble_root && (current_time - last_ble_root_seen > MESH_ROOT_TIMEOUT_MS)) {
+        ESP_LOGI(TAG, "BLE root timeout (%dms) - clearing network BLE status", MESH_ROOT_TIMEOUT_MS);
         network_has_ble_root = false;
         memset(ble_root_mac, 0, 6);
     }
@@ -614,8 +618,8 @@ void ESPNowMeshCoordinator::checkForRootElection() {
         return;
     }
 
-    // Check if we haven't heard from any root recently (15 seconds for client idle fallback)
-    if (current_time - last_root_announcement > 15000) {
+    // Check if we haven't heard from any root recently
+    if (current_time - last_root_announcement > MESH_ROOT_TIMEOUT_MS) {
         heard_from_root = false;
     }
 
@@ -650,7 +654,7 @@ void ESPNowMeshCoordinator::sendHeartbeat() {
     packet_tracker.markPacketSeen(hb.header.packet_id);
     broadcastPacket(&hb, sizeof(HeartbeatPacket));
 
-    ESP_LOGI(TAG, "Sent heartbeat (neighbors: %d, RSSI: %d, uptime: %lu, has_ble: %d)",
+    ESP_LOGD(TAG, "Sent heartbeat (neighbors: %d, RSSI: %d, uptime: %lu, has_ble: %d)",
              hb.neighbor_count, hb.avg_rssi, hb.uptime_seconds, hb.has_ble_connection);
 }
 
@@ -660,28 +664,23 @@ void ESPNowMeshCoordinator::randomBackoff() {
     vTaskDelay(pdMS_TO_TICKS(5 + (hardware->getRandom() % 10)));
 }
 
-esp_err_t ESPNowMeshCoordinator::sendMeshPacket(const ESPNowMeshPacket& packet) {
-    // Wrapper for legacy support if needed
-    // This assumes the caller constructed an ESPNowMeshPacket
-    // We should treat it as raw data
-    return broadcastPacket(&packet, sizeof(packet) - sizeof(packet.data) + packet.data_len);
-}
+
 
 // New methods for root election redesign
 
 bool ESPNowMeshCoordinator::networkHasBleRoot() const {
-    // Check if we've seen a BLE root recently (within 30 seconds)
+    // Check if we've seen a BLE root recently
     // This accounts for packet loss and stale information
     if (!network_has_ble_root) return false;
     uint32_t now = hardware->getMillis();
-    return (now - last_ble_root_seen) < 30000;
+    return (now - last_ble_root_seen) < MESH_BLE_ROOT_TIMEOUT_MS;
 }
 
 bool ESPNowMeshCoordinator::hasActiveRoot() const {
-    // Either we are the root, or we've heard from one recently (within 15 seconds)
+    // Either we are the root, or we've heard from one recently
     if (isRootNode()) return true;
     uint32_t now = hardware->getMillis();
-    return heard_from_root && (now - last_root_announcement < 15000);
+    return heard_from_root && (now - last_root_announcement < MESH_ROOT_TIMEOUT_MS);
 }
 
 void ESPNowMeshCoordinator::setBleDisplacementCallback(std::function<void()> callback) {
@@ -693,8 +692,8 @@ void ESPNowMeshCoordinator::handleBleDisplacement(const RootClaimPacket& claim) 
              claim.node_id[0], claim.node_id[1], claim.node_id[2],
              claim.node_id[3], claim.node_id[4], claim.node_id[5]);
 
-    // Set cooldown period (5 seconds) to prevent immediate reconnection
-    displaced_until = hardware->getMillis() + 5000;
+    // Set cooldown period to prevent immediate reconnection
+    displaced_until = hardware->getMillis() + MESH_DISPLACEMENT_COOLDOWN_MS;
 
     // Notify callback (will trigger phone notification + disconnect)
     if (ble_displacement_callback) {

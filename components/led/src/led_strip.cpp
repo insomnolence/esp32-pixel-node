@@ -213,19 +213,37 @@ void LEDStrip::clear() {
 }
 
 void LEDStrip::clearAll(uint16_t totalPhysicalLEDs) {
-    if (!pixel_buffer || !rmt_channel || !led_encoder) {
+    if (!rmt_channel || !led_encoder) {
         return;
     }
 
-    // Allocate GRB buffer for all physical LEDs (3 bytes per pixel)
-    uint8_t* temp_grb_buffer = new(std::nothrow) uint8_t[totalPhysicalLEDs * 3];
-    if (!temp_grb_buffer) {
-        ESP_LOGE(TAG, "Failed to allocate temp GRB buffer for clearing all LEDs");
-        return;
+    // Determine buffer to use: reuse existing grb_buffer if large enough,
+    // use stack for small strips, or fall back to heap allocation
+    const size_t required_size = totalPhysicalLEDs * 3;
+    uint8_t* clear_buffer = nullptr;
+    bool needs_free = false;
+    
+    // Stack buffer for strips up to ~170 LEDs (512 bytes)
+    uint8_t stack_buffer[512];
+    
+    if (grb_buffer && totalPhysicalLEDs <= pixel_count) {
+        // Reuse existing GRB buffer - it's large enough
+        clear_buffer = grb_buffer;
+    } else if (required_size <= sizeof(stack_buffer)) {
+        // Use stack buffer for small-to-medium strips
+        clear_buffer = stack_buffer;
+    } else {
+        // Fall back to heap allocation for very long strips
+        clear_buffer = new(std::nothrow) uint8_t[required_size];
+        if (!clear_buffer) {
+            ESP_LOGE(TAG, "Failed to allocate temp buffer for clearing %d LEDs", totalPhysicalLEDs);
+            return;
+        }
+        needs_free = true;
     }
 
-    // Clear the GRB buffer (all LEDs off - 0x00 for each color component)
-    memset(temp_grb_buffer, 0, totalPhysicalLEDs * 3);
+    // Clear the buffer (all LEDs off - 0x00 for each color component)
+    memset(clear_buffer, 0, required_size);
 
     // Send the data to turn off all physical LEDs
     rmt_transmit_config_t clear_tx_config = {
@@ -236,13 +254,16 @@ void LEDStrip::clearAll(uint16_t totalPhysicalLEDs) {
         }
     };
 
-    esp_err_t ret = rmt_transmit(rmt_channel, led_encoder, temp_grb_buffer,
-                                totalPhysicalLEDs * 3, &clear_tx_config);
+    esp_err_t ret = rmt_transmit(rmt_channel, led_encoder, clear_buffer,
+                                required_size, &clear_tx_config);
     if (ret == ESP_OK) {
         ret = rmt_tx_wait_all_done(rmt_channel, 1000); // 1 second timeout
     }
 
-    delete[] temp_grb_buffer;
+    // Only free if we allocated from heap
+    if (needs_free) {
+        delete[] clear_buffer;
+    }
 
     if (ret != ESP_OK) {
         ESP_LOGW(TAG, "Failed to clear all physical LEDs: %s", esp_err_to_name(ret));
