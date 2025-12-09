@@ -113,8 +113,9 @@ bool Player::UpdatePattern(led_time_t now, ILedStrip *strip) {
         return false;
     }
 
-    if (xSemaphoreTake(updateMutex, pdMS_TO_TICKS(50)) != pdTRUE) {
+    if (xSemaphoreTake(updateMutex, pdMS_TO_TICKS(10)) != pdTRUE) {
         // Don't block too long - skip this update if mutex unavailable
+        // 10ms is sufficient since mutex holders complete in <1ms
         ESP_LOGW(TAG, "Mutex timeout in UpdatePattern - skipping frame");
         return false;
     }

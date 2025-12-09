@@ -143,9 +143,6 @@ public:
     // Heartbeat
     void sendHeartbeat();
 
-    // Helper to send using legacy structure (temporary)
-    esp_err_t sendMeshPacket(const ESPNowMeshPacket& packet);
-
 private:
     static const char* TAG;
     static ESPNowMeshCoordinator* instance;
