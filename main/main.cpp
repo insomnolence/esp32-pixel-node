@@ -124,15 +124,15 @@ extern "C" void app_main(void) {
     }
 
     // Create Gatt Profiles here. Do this for each profile
-    // 1. PixelPacketProfile for LED control commands
-    const std::string service_uuid_str = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
-    const std::string characteristic_uuid_str = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
+    // 1. PixelPacketProfile for LED control commands (UUIDs from Kconfig)
+    const std::string service_uuid_str = CONFIG_BLE_SERVICE_UUID;
+    const std::string characteristic_uuid_str = CONFIG_BLE_CHARACTERISTIC_UUID;
     std::shared_ptr<PixelPacketProfile> pixel_packet_profile = std::make_shared<PixelPacketProfile>(service_uuid_str, characteristic_uuid_str);
     bleGattServer.addProfile(pixel_packet_profile);
 
-    // 2. NetworkHealthProfile for mesh analytics
-    const std::string health_service_uuid_str = "12345678-1234-1234-1234-123456789abc";
-    const std::string health_characteristic_uuid_str = "87654321-4321-4321-4321-cba987654321";
+    // 2. NetworkHealthProfile for mesh analytics (UUIDs from Kconfig)
+    const std::string health_service_uuid_str = CONFIG_BLE_HEALTH_SERVICE_UUID;
+    const std::string health_characteristic_uuid_str = CONFIG_BLE_HEALTH_CHARACTERISTIC_UUID;
     std::shared_ptr<NetworkHealthProfile> health_profile = std::make_shared<NetworkHealthProfile>(health_service_uuid_str, health_characteristic_uuid_str);
     bleGattServer.addProfile(health_profile);
 
