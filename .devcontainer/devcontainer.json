@@ -1,6 +1,6 @@
 {
 	"name": "ESP-IDF",
-	"image": "espressif/idf:latest",
+	"image": "espressif/idf:v6.0-beta1",
 	"customizations": {
 		"vscode": {
 			"settings": {

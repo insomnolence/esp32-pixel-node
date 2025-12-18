@@ -238,6 +238,7 @@ bool GlobalObjects::initializeLEDController(HeapUtils::InitStatus& status, ILedS
     }
 }
 
+#ifdef CONFIG_BUTTON_INTERFACE_ENABLED
 bool GlobalObjects::initializeButtonManager(HeapUtils::InitStatus& status, SystemHardwareInterface* hw) {
     ESP_LOGI(TAG, "Allocating ButtonManager...");
     auto result = HeapUtils::ObjectFactory<ButtonManager>::create(hw);
@@ -256,6 +257,7 @@ bool GlobalObjects::initializeButtonManager(HeapUtils::InitStatus& status, Syste
         return false;
     }
 }
+#endif
 
 bool GlobalObjects::initializeNetworkHealthMonitor(HeapUtils::InitStatus& status) {
     ESP_LOGI(TAG, "Allocating NetworkHealthMonitor...");

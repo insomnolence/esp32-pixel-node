@@ -87,7 +87,7 @@ void RootTakeoverManager::update() {
     
     // Global timeout check (defensive: only if we have a valid start time)
     if (takeover_start_time > 0 && isTimeoutElapsed(takeover_start_time, TAKEOVER_TIMEOUT_MS)) {
-        ESP_LOGE(TAG, "❌ Takeover timeout after %dms", TAKEOVER_TIMEOUT_MS);
+        ESP_LOGE(TAG, "❌ Takeover timeout after %dms", (int)TAKEOVER_TIMEOUT_MS);
         completeTakeover(FAILED_TIMEOUT);
         return;
     }

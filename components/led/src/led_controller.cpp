@@ -811,8 +811,8 @@ esp_err_t LEDController::showButtonFeedback(FeedbackType type, uint32_t duration
         return ESP_ERR_TIMEOUT;
     }
     
-    ESP_LOGD(TAG, "Button feedback command sent to LED task (type=%d, duration=%ums)", 
-             (int)type, duration_ms);
+    ESP_LOGD(TAG, "Button feedback command sent to LED task (type=%d, duration=%lums)",
+             (int)type, (unsigned long)duration_ms);
     return ESP_OK;
 }
 
@@ -828,8 +828,8 @@ void LEDController::handleButtonFeedbackInLEDTask(FeedbackType type, uint32_t du
         return;
     }
     
-    ESP_LOGD(TAG, "Handling button feedback in LED task: type=%d, duration=%ums", 
-             (int)type, duration_ms);
+    ESP_LOGD(TAG, "Handling button feedback in LED task: type=%d, duration=%lums",
+             (int)type, (unsigned long)duration_ms);
     
     // Apply immediate feedback pattern based on type
     switch (type) {

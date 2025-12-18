@@ -62,8 +62,8 @@ void ButtonFeedbackController::showFeedback(FeedbackType type) {
         feedback_duration_ms_ = duration_ms;
         feedback_active_ = true;
         
-        ESP_LOGD(TAG, "🎨 Button feedback sent to LED task: %s for %u ms", 
-                 getFeedbackTypeName(type), feedback_duration_ms_);
+        ESP_LOGD(TAG, "🎨 Button feedback sent to LED task: %s for %lu ms",
+                 getFeedbackTypeName(type), (unsigned long)feedback_duration_ms_);
     } else {
         ESP_LOGW(TAG, "Failed to send button feedback to LED task: %s", esp_err_to_name(result));
         

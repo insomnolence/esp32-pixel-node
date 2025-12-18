@@ -172,6 +172,22 @@ menu "ESP32 LED Mesh Configuration"
                 BLE GATT characteristic UUID for health data notifications.
                 Must match the Flutter app's HEALTH_CHARACTERISTIC UUID.
 
+        config BLE_BATTERY_SERVICE_UUID
+            string "BLE Battery Service UUID"
+            default "0000180f-0000-1000-8000-00805f9b34fb"
+            help
+                BLE GATT service UUID for battery level reporting.
+                Default is the standard Bluetooth SIG Battery Service UUID (0x180F).
+                Standard clients will auto-recognize this UUID.
+
+        config BLE_BATTERY_CHARACTERISTIC_UUID
+            string "BLE Battery Level Characteristic UUID"
+            default "00002a19-0000-1000-8000-00805f9b34fb"
+            help
+                BLE GATT characteristic UUID for battery level value.
+                Default is the standard Bluetooth SIG Battery Level UUID (0x2A19).
+                Standard clients will auto-recognize this UUID.
+
         config BLE_MAX_PACKET_SIZE
             int "Maximum BLE Packet Size"
             range 20 512
@@ -334,6 +350,77 @@ menu "ESP32 LED Mesh Configuration"
             help
                 GPIO pin for the status indicator LED.
                 ESP32C3 custom board: GPIO 6
+    endmenu
+
+    menu "Battery Monitoring Configuration"
+        config BATTERY_MONITOR_ENABLED
+            bool "Enable Battery Monitoring"
+            default y
+            help
+                Enable battery voltage monitoring via ADC.
+                Reports battery level over BLE Battery Service.
+
+        config BATTERY_ADC_GPIO
+            int "Battery ADC GPIO Pin"
+            depends on BATTERY_MONITOR_ENABLED
+            range 0 39
+            default 0 if IDF_TARGET_ESP32C3
+            default 35 if IDF_TARGET_ESP32
+            default 0
+            help
+                GPIO pin for battery voltage ADC reading.
+                ESP32C3 custom board: GPIO 0 (A0)
+                Adafruit ESP32 Feather V2: GPIO 35 (A13)
+
+        config BATTERY_DIVIDER_R_HIGH
+            int "Voltage Divider High Resistor (kOhm)"
+            depends on BATTERY_MONITOR_ENABLED
+            range 1 1000
+            default 180 if IDF_TARGET_ESP32C3
+            default 200 if IDF_TARGET_ESP32
+            default 200
+            help
+                High-side resistor value in kOhm for voltage divider.
+                ESP32C3 custom board: 180kOhm
+                Adafruit ESP32 Feather V2: 200kOhm
+
+        config BATTERY_DIVIDER_R_LOW
+            int "Voltage Divider Low Resistor (kOhm)"
+            depends on BATTERY_MONITOR_ENABLED
+            range 1 1000
+            default 51 if IDF_TARGET_ESP32C3
+            default 200 if IDF_TARGET_ESP32
+            default 200
+            help
+                Low-side resistor value in kOhm for voltage divider.
+                ESP32C3 custom board: 51kOhm
+                Adafruit ESP32 Feather V2: 200kOhm
+
+        config BATTERY_FULL_MV
+            int "Battery Full Voltage (mV)"
+            depends on BATTERY_MONITOR_ENABLED
+            range 3000 5000
+            default 4200
+            help
+                Voltage in mV when battery is considered 100% full.
+                Typical Li-ion: 4200mV
+
+        config BATTERY_EMPTY_MV
+            int "Battery Empty Voltage (mV)"
+            depends on BATTERY_MONITOR_ENABLED
+            range 2500 4000
+            default 3000
+            help
+                Voltage in mV when battery is considered 0% (empty).
+                Typical Li-ion: 3000mV
+
+        config BATTERY_UPDATE_INTERVAL_MS
+            int "Battery Update Interval (ms)"
+            depends on BATTERY_MONITOR_ENABLED
+            range 1000 60000
+            default 10000
+            help
+                Interval for updating battery voltage reading.
     endmenu
 
 endmenu

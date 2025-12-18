@@ -23,8 +23,8 @@ esp_err_t ButtonManager::init(uint8_t pin1_gpio, uint8_t pin2_gpio, uint32_t deb
     this->debounce_delay = debounce_ms;
 
     ESP_LOGI(TAG, "🔘 Initializing button interface (polling mode)...");
-    ESP_LOGI(TAG, "Button 1: GPIO %d, Button 2: GPIO %d, Debounce: %dms", 
-             pin1, pin2, debounce_delay);
+    ESP_LOGI(TAG, "Button 1: GPIO %d, Button 2: GPIO %d, Debounce: %lums",
+             pin1, pin2, (unsigned long)debounce_delay);
     ESP_LOGI(TAG, "Using GPIO polling to avoid RMT timing conflicts on ESP32-C3");
     
     // Configure Button 1 GPIO using the hardware interface

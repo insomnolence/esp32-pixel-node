@@ -18,8 +18,8 @@ DualButtonDetector::DualButtonDetector()
 
 esp_err_t DualButtonDetector::init() {
     ESP_LOGI(TAG, "🔄 Initializing dual button detection...");
-    ESP_LOGI(TAG, "Detection window: %dms, Hold confirmation: %dms", 
-             SIMULTANEOUS_WINDOW_MS, HOLD_CONFIRMATION_MS);
+    ESP_LOGI(TAG, "Detection window: %dms, Hold confirmation: %dms",
+             (int)SIMULTANEOUS_WINDOW_MS, (int)HOLD_CONFIRMATION_MS);
     
     resetDetection();
     
@@ -42,13 +42,13 @@ void DualButtonDetector::processButtonEvent(ButtonManager::ButtonEvent event) {
             if (event == ButtonManager::BUTTON_1_PRESS) {
                 button1_press_time = current_time;
                 transitionToState(BUTTON_1_PENDING);
-                ESP_LOGI(TAG, "🔘 Button 1 detected - waiting for Button 2 within %dms", 
-                         SIMULTANEOUS_WINDOW_MS);
+                ESP_LOGI(TAG, "🔘 Button 1 detected - waiting for Button 2 within %dms",
+                         (int)SIMULTANEOUS_WINDOW_MS);
             } else if (event == ButtonManager::BUTTON_2_PRESS) {
                 button2_press_time = current_time;
                 transitionToState(BUTTON_2_PENDING);
-                ESP_LOGI(TAG, "🔘 Button 2 detected - waiting for Button 1 within %dms", 
-                         SIMULTANEOUS_WINDOW_MS);
+                ESP_LOGI(TAG, "🔘 Button 2 detected - waiting for Button 1 within %dms",
+                         (int)SIMULTANEOUS_WINDOW_MS);
             }
             break;
             
@@ -60,14 +60,14 @@ void DualButtonDetector::processButtonEvent(ButtonManager::ButtonEvent event) {
                 if (time_diff <= SIMULTANEOUS_WINDOW_MS) {
                     dual_press_start_time = current_time;
                     transitionToState(DUAL_DETECTED);
-                    ESP_LOGI(TAG, "🎯 DUAL PRESS DETECTED! Time difference: %dms", time_diff);
+                    ESP_LOGI(TAG, "🎯 DUAL PRESS DETECTED! Time difference: %lums", (unsigned long)time_diff);
                     
                     if (dual_button_callback) {
                         dual_button_callback(DUAL_PRESS_DETECTED);
                     }
                 } else {
-                    ESP_LOGW(TAG, "Button 2 too late - time difference: %dms (max: %dms)", 
-                             time_diff, SIMULTANEOUS_WINDOW_MS);
+                    ESP_LOGW(TAG, "Button 2 too late - time difference: %lums (max: %dms)",
+                             (unsigned long)time_diff, (int)SIMULTANEOUS_WINDOW_MS);
                     resetDetection();
                 }
             }
@@ -81,14 +81,14 @@ void DualButtonDetector::processButtonEvent(ButtonManager::ButtonEvent event) {
                 if (time_diff <= SIMULTANEOUS_WINDOW_MS) {
                     dual_press_start_time = current_time;
                     transitionToState(DUAL_DETECTED);
-                    ESP_LOGI(TAG, "🎯 DUAL PRESS DETECTED! Time difference: %dms", time_diff);
+                    ESP_LOGI(TAG, "🎯 DUAL PRESS DETECTED! Time difference: %lums", (unsigned long)time_diff);
                     
                     if (dual_button_callback) {
                         dual_button_callback(DUAL_PRESS_DETECTED);
                     }
                 } else {
-                    ESP_LOGW(TAG, "Button 1 too late - time difference: %dms (max: %dms)", 
-                             time_diff, SIMULTANEOUS_WINDOW_MS);
+                    ESP_LOGW(TAG, "Button 1 too late - time difference: %lums (max: %dms)",
+                             (unsigned long)time_diff, (int)SIMULTANEOUS_WINDOW_MS);
                     resetDetection();
                 }
             }
@@ -124,7 +124,7 @@ void DualButtonDetector::update() {
         case DUAL_DETECTED:
             // Transition to hold confirmation state
             transitionToState(HOLD_CONFIRMATION);
-            ESP_LOGI(TAG, "🕐 Hold confirmation started - need %dms hold", HOLD_CONFIRMATION_MS);
+            ESP_LOGI(TAG, "🕐 Hold confirmation started - need %dms hold", (int)HOLD_CONFIRMATION_MS);
             break;
             
         case HOLD_CONFIRMATION:

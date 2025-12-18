@@ -194,7 +194,7 @@ void ButtonLogic::checkStateTimeout() {
 
     if (now - last_state_change_ > STATE_TIMEOUT_MS) {
         if (current_state_ != STATE_IDLE) {
-            ESP_LOGW(TAG, "State timeout after %u ms - returning to IDLE", STATE_TIMEOUT_MS);
+            ESP_LOGW(TAG, "State timeout after %lu ms - returning to IDLE", (unsigned long)STATE_TIMEOUT_MS);
             transitionToState(STATE_IDLE);
             led_controller_->setIdleMode();
         }

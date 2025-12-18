@@ -128,8 +128,8 @@ bool Player::UpdatePattern(led_time_t now, ILedStrip *strip) {
     if (stepDuration > 0 && elapsed >= stepDuration) {
         int oldStep = step;
         step = sequence->Advance(step, true); // timed advance
-        ESP_LOGI(TAG, "Step %d->%d: duration=%ums, elapsed=%ums, now=%u, stepTime=%u",
-                 oldStep, step, stepDuration, elapsed, (unsigned)now, (unsigned)stepTime);
+        ESP_LOGI(TAG, "Step %d->%d: duration=%lums, elapsed=%lums, now=%lu, stepTime=%lu",
+                 oldStep, step, (unsigned long)stepDuration, (unsigned long)elapsed, (unsigned long)now, (unsigned long)stepTime);
         stepTime = now;
         patternChanged = true;
 

@@ -4,6 +4,10 @@
 #include "system_control/nvs_manager.h"
 #include "bluetooth/pixel_packet_profile.h"
 #include "bluetooth/network_health_profile.h"
+#ifdef CONFIG_BATTERY_MONITOR_ENABLED
+#include "bluetooth/battery_service_profile.h"
+#include "system/battery_monitor.h"
+#endif
 #include "mesh/espnow_mesh_coordinator.h"
 #include "packet/led_packet_processor.h"
 #include "packet/generic_packet.h"
@@ -144,6 +148,22 @@ extern "C" void app_main(void) {
     auto& healthMonitor = GlobalObjects::getNetworkHealthMonitor();
     health_profile->setNetworkHealthMonitor(&healthMonitor);
     health_profile->startPeriodicUpdates(5000); // Update every 5 seconds
+
+#ifdef CONFIG_BATTERY_MONITOR_ENABLED
+    // 3. BatteryServiceProfile for battery level monitoring (Standard BLE UUID 0x180F)
+    static BatteryMonitor batteryMonitor;
+    if (batteryMonitor.init() == ESP_OK) {
+        const std::string battery_service_uuid_str = CONFIG_BLE_BATTERY_SERVICE_UUID;
+        const std::string battery_characteristic_uuid_str = CONFIG_BLE_BATTERY_CHARACTERISTIC_UUID;
+        std::shared_ptr<BatteryServiceProfile> battery_profile = std::make_shared<BatteryServiceProfile>(battery_service_uuid_str, battery_characteristic_uuid_str);
+        bleGattServer.addProfile(battery_profile);
+        battery_profile->setBatteryMonitor(&batteryMonitor);
+        battery_profile->startPeriodicUpdates(CONFIG_BATTERY_UPDATE_INTERVAL_MS);
+        ESP_LOGI(MAIN_TAG, "🔋 Battery service enabled - updates every %ld ms", (long)CONFIG_BATTERY_UPDATE_INTERVAL_MS);
+    } else {
+        ESP_LOGW(MAIN_TAG, "⚠️ Battery monitor initialization failed - service disabled");
+    }
+#endif
 
     // Set up pattern broadcast callback for button-triggered modes
     ledController.setPatternBroadcastCallback([&meshCoordinator](const GenericPacket& packet) {
@@ -309,11 +329,7 @@ extern "C" void app_main(void) {
         }
     });
 
-    meshCoordinator.setRoleChangeCallback([&meshCoordinator
-#ifdef CONFIG_BUTTON_INTERFACE_ENABLED
-                                          , &buttonLogic, &rootTakeoverManager
-#endif
-                                          ](NodeRole old_role, NodeRole new_role) {
+    meshCoordinator.setRoleChangeCallback([&meshCoordinator](NodeRole old_role, NodeRole new_role) {
 #ifdef CONFIG_BUTTON_INTERFACE_ENABLED
         // Notify button logic and root takeover manager of role changes
         bool is_root = (new_role == NodeRole::MESH_ROOT_ACTIVE || new_role == NodeRole::MESH_ROOT_AUTONOMOUS);
@@ -336,11 +352,7 @@ extern "C" void app_main(void) {
     });
 
     // Set up BLE connection callbacks to notify mesh coordinator
-    pixel_packet_profile->setBleConnectionCallback([&meshCoordinator, &pixel_packet_profile
-#ifdef CONFIG_BUTTON_INTERFACE_ENABLED
-                                                   , &buttonLogic, &rootTakeoverManager
-#endif
-                                                   ](bool connected) {
+    pixel_packet_profile->setBleConnectionCallback([&meshCoordinator, &pixel_packet_profile](bool connected) {
 #ifdef CONFIG_BUTTON_INTERFACE_ENABLED
         // Notify button logic and root takeover manager of BLE connection events
         buttonLogic.onBleConnectionChanged(connected);
@@ -510,14 +522,14 @@ extern "C" void app_main(void) {
             uint32_t stack_free_bytes = stack_free * sizeof(StackType_t);
             
             if (stack_free_bytes < 1024) { // Less than 1KB free - CRITICAL
-                ESP_LOGE(MAIN_TAG, "🚨 STACK CRITICAL: Only %u bytes free of %u total", 
-                         stack_free_bytes, CONFIG_ESP_MAIN_TASK_STACK_SIZE);
-            } else if (stack_free_bytes < 2048) { // Less than 2KB free - WARNING  
-                ESP_LOGW(MAIN_TAG, "⚠️ STACK WARNING: %u bytes free of %u total", 
-                         stack_free_bytes, CONFIG_ESP_MAIN_TASK_STACK_SIZE);
+                ESP_LOGE(MAIN_TAG, "🚨 STACK CRITICAL: Only %lu bytes free of %d total",
+                         (unsigned long)stack_free_bytes, CONFIG_ESP_MAIN_TASK_STACK_SIZE);
+            } else if (stack_free_bytes < 2048) { // Less than 2KB free - WARNING
+                ESP_LOGW(MAIN_TAG, "⚠️ STACK WARNING: %lu bytes free of %d total",
+                         (unsigned long)stack_free_bytes, CONFIG_ESP_MAIN_TASK_STACK_SIZE);
             } else {
-                ESP_LOGI(MAIN_TAG, "📊 Stack health: %u bytes free of %u total", 
-                         stack_free_bytes, CONFIG_ESP_MAIN_TASK_STACK_SIZE);
+                ESP_LOGI(MAIN_TAG, "📊 Stack health: %lu bytes free of %d total",
+                         (unsigned long)stack_free_bytes, CONFIG_ESP_MAIN_TASK_STACK_SIZE);
             }
             lastStackMonitor = now;
         }
