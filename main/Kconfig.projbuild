@@ -316,4 +316,24 @@ menu "ESP32 LED Mesh Configuration"
                 Debounce time for button presses to prevent false triggers.
     endmenu
 
+    menu "Indicator LED Configuration"
+        config INDICATOR_LED_ENABLED
+            bool "Enable Indicator LED"
+            default y if IDF_TARGET_ESP32C3
+            default n
+            help
+                Enable status indicator LED that turns on at boot.
+                ESP32C3 custom board has an indicator LED on GPIO 6.
+
+        config INDICATOR_LED_GPIO
+            int "Indicator LED GPIO Pin"
+            depends on INDICATOR_LED_ENABLED
+            range 0 48
+            default 6 if IDF_TARGET_ESP32C3
+            default 2
+            help
+                GPIO pin for the status indicator LED.
+                ESP32C3 custom board: GPIO 6
+    endmenu
+
 endmenu

@@ -33,11 +33,12 @@
 #include <functional>
 #include <memory>
 
+#ifdef CONFIG_INDICATOR_LED_ENABLED
 #include "driver/gpio.h"
+#endif
 
 #define MAIN_TAG "ESP_LED_MESH"
 #define DEVICE_NAME "ESP_LED_NODE"
-#define CONFIG_INDICATOR_IO GPIO_NUM_6 // GPIO for indicator LED
 
 extern "C" void app_main(void) {
     // 🔄 RESET REASON: Log why we rebooted (critical for battery debugging)
@@ -60,11 +61,12 @@ extern "C" void app_main(void) {
     ESP_LOGI(MAIN_TAG, "🚀 Starting ESP32 LED Mesh with heap-optimized architecture");
     LOG_CURRENT_STACK();
     
-    // Setup Indicator LED on IO6
-    gpio_set_direction(CONFIG_INDICATOR_IO, GPIO_MODE_OUTPUT);
-    gpio_set_level(CONFIG_INDICATOR_IO, 1); // Turn on indicator LED
-    
-    
+#ifdef CONFIG_INDICATOR_LED_ENABLED
+    // Setup Indicator LED
+    gpio_set_direction((gpio_num_t)CONFIG_INDICATOR_LED_GPIO, GPIO_MODE_OUTPUT);
+    gpio_set_level((gpio_num_t)CONFIG_INDICATOR_LED_GPIO, 1); // Turn on indicator LED
+#endif
+
     // Enable debug logging for mesh coordinator
     esp_log_level_set("ESPNowMeshCoordinator", ESP_LOG_DEBUG);
     ESP_LOGI(MAIN_TAG, "🔍 Enabled debug logging for mesh coordinator components");
@@ -515,6 +517,8 @@ extern "C" void app_main(void) {
         vTaskDelay(pdMS_TO_TICKS(15)); // 15ms delay for smooth LED updates while reducing ESP-NOW/BLE interference
     }
 
-    gpio_set_level(CONFIG_INDICATOR_IO, 0); // Turn off indicator LED
+#ifdef CONFIG_INDICATOR_LED_ENABLED
+    gpio_set_level((gpio_num_t)CONFIG_INDICATOR_LED_GPIO, 0); // Turn off indicator LED
+#endif
 
 }
