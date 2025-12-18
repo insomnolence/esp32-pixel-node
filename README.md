@@ -69,10 +69,13 @@ WARNING: Avoid strapping pins: ESP32C3 pins 2,8,9 / ESP32 pins 0,2,5,12,15
 #### Configure LED Count
 Set "Number of LEDs" based on your strip and power supply:
 
+The WS2812B chip run at about 60mA per chip at full brightness
+
 Power Considerations:
-- USB Power (5V, 500mA): Max ~25 LEDs at full brightness
-- USB Power (5V, 1A): Max ~50 LEDs at full brightness  
-- External 5V Power: Scale according to supply (60mA per LED at full white)
+- USB Power (5V, 500mA): Max ~7 LEDs at full brightness
+- USB Power (5V, 1A): Max ~14 LEDs at full brightness  
+- External 5V Power: Current PS does not support running the board
+- Official board (5V, 2A): ~28 LEDs at full power
 
 NOTE: Brightness Levels for Power Safety
 

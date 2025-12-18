@@ -32,19 +32,26 @@
 #include <functional>
 #include <memory>
 
+#include "driver/gpio.h"
+
 #define MAIN_TAG "ESP_LED_MESH"
 #define DEVICE_NAME "ESP_LED_NODE"
-
+#define CONFIG_INDICATOR_IO GPIO_NUM_6 // GPIO for indicator LED
 
 extern "C" void app_main(void) {
     // 📊 STACK OPTIMIZATION: Monitor initial stack usage
     ESP_LOGI(MAIN_TAG, "🚀 Starting ESP32 LED Mesh with heap-optimized architecture");
     LOG_CURRENT_STACK();
     
+    // Setup Indicator LED on IO6
+    gpio_set_direction(CONFIG_INDICATOR_IO, GPIO_MODE_OUTPUT);
+    gpio_set_level(CONFIG_INDICATOR_IO, 1); // Turn on indicator LED
+    
+    
     // Enable debug logging for mesh coordinator
     esp_log_level_set("ESPNowMeshCoordinator", ESP_LOG_DEBUG);
     ESP_LOGI(MAIN_TAG, "🔍 Enabled debug logging for mesh coordinator components");
-
+    
     // 🏭 HEAP ALLOCATION: Initialize large objects on heap for stack safety
     auto init_status = GlobalObjects::initialize();
     if (!init_status.canContinue()) {
@@ -53,6 +60,14 @@ extern "C" void app_main(void) {
         esp_restart();
     }
     
+    // 💡 Initialize LED controller (now on heap)
+    auto& ledController = GlobalObjects::getLEDController();
+    if (ledController.begin() != ESP_OK) {
+        ESP_LOGE(MAIN_TAG, "❌ Failed to initialize LED controller");
+        return;
+    }
+
+    ledController.update(); //Blank LEDs initially
     // 📊 Check stack usage after heap allocation
     LOG_CURRENT_STACK();
 
@@ -108,14 +123,6 @@ extern "C" void app_main(void) {
     auto& healthMonitor = GlobalObjects::getNetworkHealthMonitor();
     health_profile->setNetworkHealthMonitor(&healthMonitor);
     health_profile->startPeriodicUpdates(5000); // Update every 5 seconds
-    
-    
-    // 💡 Initialize LED controller (now on heap)
-    auto& ledController = GlobalObjects::getLEDController();
-    if (ledController.begin() != ESP_OK) {
-        ESP_LOGE(MAIN_TAG, "❌ Failed to initialize LED controller");
-        return;
-    }
 
     // Set up pattern broadcast callback for button-triggered modes
     ledController.setPatternBroadcastCallback([&meshCoordinator](const GenericPacket& packet) {
@@ -490,5 +497,7 @@ extern "C" void app_main(void) {
 
         vTaskDelay(pdMS_TO_TICKS(15)); // 15ms delay for smooth LED updates while reducing ESP-NOW/BLE interference
     }
+
+    gpio_set_level(CONFIG_INDICATOR_IO, 0); // Turn off indicator LED
 
 }
