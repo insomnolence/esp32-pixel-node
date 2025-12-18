@@ -4,6 +4,4 @@ cmake_minimum_required(VERSION 3.16)
 
 # Use IDF_PATH environment variable for portability (required for Docker/CI builds)
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-# include (/home/dibble/DevTools/esp-idf/tools/cmake/project.cmake)
-include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(esp32_led_mesh)
