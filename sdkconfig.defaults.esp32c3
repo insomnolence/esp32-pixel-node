@@ -5,3 +5,12 @@ CONFIG_IDF_TARGET="esp32c3"
 CONFIG_BT_ENABLED=y
 # CONFIG_BT_BLE_50_FEATURES_SUPPORTED is not set
 CONFIG_BT_BLE_42_FEATURES_SUPPORTED=y
+
+# ESP32-C3 Custom Board LED Configuration
+# Reduced LED count due to memory/power constraints
+CONFIG_LED_COUNT=60
+
+# Button interface enabled for C3 custom board
+CONFIG_BUTTON_INTERFACE_ENABLED=y
+CONFIG_BUTTON_1_GPIO=3
+CONFIG_BUTTON_2_GPIO=2
