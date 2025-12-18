@@ -62,9 +62,11 @@ extern "C" void app_main(void) {
     LOG_CURRENT_STACK();
     
 #ifdef CONFIG_INDICATOR_LED_ENABLED
-    // Setup Indicator LED
+    // Setup Indicator LED (active-high: 1 = ON, 0 = OFF)
+    gpio_reset_pin((gpio_num_t)CONFIG_INDICATOR_LED_GPIO);  // Reset to clean GPIO state
     gpio_set_direction((gpio_num_t)CONFIG_INDICATOR_LED_GPIO, GPIO_MODE_OUTPUT);
     gpio_set_level((gpio_num_t)CONFIG_INDICATOR_LED_GPIO, 1); // Turn on indicator LED
+    ESP_LOGI(MAIN_TAG, "🔦 Indicator LED ON (GPIO %d)", CONFIG_INDICATOR_LED_GPIO);
 #endif
 
     // Enable debug logging for mesh coordinator
@@ -421,6 +423,12 @@ extern "C" void app_main(void) {
     ESP_LOGI(MAIN_TAG, "✅ ESP32 LED Mesh Node ready - Node ID: 0x%04X", meshCoordinator.getNodeId());
     ESP_LOGI(MAIN_TAG, "📱 Connect via BLE to '%s' to control LED patterns", DEVICE_NAME);
 
+#ifdef CONFIG_INDICATOR_LED_ENABLED
+    // Boot complete - turn off indicator LED (active-high: 0 = OFF)
+    gpio_set_level((gpio_num_t)CONFIG_INDICATOR_LED_GPIO, 0);
+    ESP_LOGI(MAIN_TAG, "🔦 Indicator LED OFF - boot complete");
+#endif
+
     while (true) {
         // Get current time for timing operations
         uint32_t now = esp_timer_get_time() / 1000;
@@ -516,9 +524,5 @@ extern "C" void app_main(void) {
 
         vTaskDelay(pdMS_TO_TICKS(15)); // 15ms delay for smooth LED updates while reducing ESP-NOW/BLE interference
     }
-
-#ifdef CONFIG_INDICATOR_LED_ENABLED
-    gpio_set_level((gpio_num_t)CONFIG_INDICATOR_LED_GPIO, 0); // Turn off indicator LED
-#endif
 
 }
