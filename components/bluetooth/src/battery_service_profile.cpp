@@ -101,52 +101,63 @@ void BatteryServiceProfile::sendBatteryUpdate() {
         return;
     }
 
-    // Get both voltage and percentage from a single ADC read
+    // Get battery status from monitor
     BatteryStatus status = battery_monitor->getStatus();
-    uint8_t battery_level = status.percentage;
 
-    // Send battery level as notification (standard BLE battery level is single byte 0-100)
+    // Pack into 4-byte struct: voltage_mv (2 bytes LE) + percentage (1 byte) + is_charging (1 byte)
+    uint8_t battery_data[4];
+    battery_data[0] = status.voltage_mv & 0xFF;         // voltage low byte
+    battery_data[1] = (status.voltage_mv >> 8) & 0xFF;  // voltage high byte
+    battery_data[2] = status.percentage;
+    battery_data[3] = status.is_charging ? 1 : 0;
+
+    // Send battery status as notification (4 bytes)
     esp_err_t ret = esp_ble_gatts_send_indicate(
         current_gatts_if,
         current_conn_id,
         char_handle,
-        sizeof(uint8_t),
-        &battery_level,
+        sizeof(battery_data),
+        battery_data,
         false  // false = notification, true = indication
     );
 
     if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "🔋 Battery update sent - Level: %d%%, Voltage: %umV", battery_level, status.voltage_mv);
+        ESP_LOGI(TAG, "🔋 Battery update sent - Voltage: %umV, Level: %d%%", status.voltage_mv, status.percentage);
     } else {
         ESP_LOGW(TAG, "❌ Failed to send battery update: %s", esp_err_to_name(ret));
     }
 }
 
 void BatteryServiceProfile::handleReadEvent(esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) {
-    ESP_LOGI(TAG, "📖 Battery level read request");
+    ESP_LOGI(TAG, "📖 Battery status read request");
 
-    uint8_t battery_level = 0;
+    // Pack 4-byte struct: voltage_mv (2 bytes LE) + percentage (1 byte) + is_charging (1 byte)
+    uint8_t battery_data[4] = {0, 0, 0, 0};
 
     if (battery_monitor != nullptr && battery_monitor->isAvailable()) {
-        battery_level = battery_monitor->getPercentage();
-        uint16_t voltage = battery_monitor->readVoltage();
-        ESP_LOGI(TAG, "🔋 Battery: %d%% (%umV)", battery_level, voltage);
+        BatteryStatus status = battery_monitor->getStatus();
+        battery_data[0] = status.voltage_mv & 0xFF;         // voltage low byte
+        battery_data[1] = (status.voltage_mv >> 8) & 0xFF;  // voltage high byte
+        battery_data[2] = status.percentage;
+        battery_data[3] = status.is_charging ? 1 : 0;
+        ESP_LOGI(TAG, "🔋 Battery: %umV (%d%%)", status.voltage_mv, status.percentage);
     } else {
-        ESP_LOGW(TAG, "⚠️ Battery monitor not available, returning 0%%");
+        ESP_LOGW(TAG, "⚠️ Battery monitor not available, returning zeros");
     }
 
     esp_gatt_rsp_t rsp;
     memset(&rsp, 0, sizeof(esp_gatt_rsp_t));
     rsp.attr_value.handle = param->read.handle;
-    rsp.attr_value.len = 1;
-    rsp.attr_value.value[0] = battery_level;
+    rsp.attr_value.len = 4;
+    memcpy(rsp.attr_value.value, battery_data, 4);
 
     esp_err_t ret = esp_ble_gatts_send_response(gatts_if, param->read.conn_id, param->read.trans_id,
                                                ESP_GATT_OK, &rsp);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "❌ Failed to send battery read response: %s", esp_err_to_name(ret));
     } else {
-        ESP_LOGI(TAG, "✅ Battery level read response sent: %d%%", battery_level);
+        uint16_t voltage = battery_data[0] | (battery_data[1] << 8);
+        ESP_LOGI(TAG, "✅ Battery read response sent: %umV", voltage);
     }
 }
 
