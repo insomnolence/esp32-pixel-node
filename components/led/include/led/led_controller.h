@@ -2,6 +2,10 @@
 
 #include "led/led_strip_interface.h"
 #include "led/led_strip.h" // Keep for LEDStrip concrete type visibility if needed by others, or remove if possible
+
+#ifdef CONFIG_BATTERY_MONITOR_ENABLED
+class BatteryMonitor;  // Forward declaration
+#endif
 #include "led/led_config.h" // Centralized brightness and pattern configuration
 #include "led/player.h"
 #include "led/sequence.h"
@@ -15,18 +19,30 @@
 #include <functional>
 #include <memory>
 
-// Default LED pin based on target platform
-#ifdef CONFIG_IDF_TARGET_ESP32C3
+// Default LED pin and count from Kconfig (with fallbacks)
+#ifdef CONFIG_LED_PIN
+#define DEFAULT_LED_PIN CONFIG_LED_PIN
+#elif CONFIG_IDF_TARGET_ESP32C3
 #define DEFAULT_LED_PIN 7   // ESP32C3 board
-#define DEFAULT_LED_COUNT 60  // ESP32C3: Reduced count to prevent power-related resets
 #elif CONFIG_IDF_TARGET_ESP32
 #define DEFAULT_LED_PIN 12  // ESP32 board
-#define DEFAULT_LED_COUNT 144 // ESP32: Full strip
 #else
 #define DEFAULT_LED_PIN 7   // Default fallback
+#endif
+
+#ifdef CONFIG_LED_COUNT
+#define DEFAULT_LED_COUNT CONFIG_LED_COUNT
+#elif CONFIG_IDF_TARGET_ESP32C3
+#define DEFAULT_LED_COUNT 60  // ESP32C3: Reduced for memory/power
+#else
 #define DEFAULT_LED_COUNT 144 // Default: Full strip
 #endif
+
+#ifdef CONFIG_PHYSICAL_LED_STRIP_LENGTH
+#define PHYSICAL_LED_STRIP_LENGTH CONFIG_PHYSICAL_LED_STRIP_LENGTH
+#else
 #define PHYSICAL_LED_STRIP_LENGTH 144  // Total LEDs on physical strip (for clearing extras)
+#endif
 
 // Dual-core processing message types
 enum class LEDCommandType {
@@ -99,6 +115,11 @@ public:
 
     // Direct LED access for local feedback (ButtonFeedbackController) - DEPRECATED: Use showButtonFeedback instead
     ILedStrip* getLEDStrip() { return strip; }
+
+#ifdef CONFIG_BATTERY_MONITOR_ENABLED
+    // Voltage-aware power limiting
+    void setBatteryMonitor(BatteryMonitor* monitor);
+#endif
 
     // Pattern broadcasting (for mesh integration)
     void setPatternBroadcastCallback(PatternBroadcastCallback callback);

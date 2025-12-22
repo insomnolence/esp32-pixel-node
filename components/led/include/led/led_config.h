@@ -65,7 +65,9 @@
 /**
  * @brief Hardware-specific maximum brightness
  *
- * ESP32-C3: Capped at 67 due to TPS61322A boost converter's ~1.6A max output.
+ * ESP32-C3: Capped at 35 as a conservative default. Dynamic power limiting
+ *           (CONFIG_LED_MAX_POWER_MA) provides smarter scaling based on actual
+ *           power draw rather than a fixed brightness cap.
  * ESP32: No hardware limit (full 0-255 range supported).
  *
  * The clamp macro only affects ESP32-C3; ESP32 can use higher brightness
@@ -75,6 +77,56 @@
 #define LED_BRIGHTNESS_HARDWARE_MAX 35
 #else
 #define LED_BRIGHTNESS_HARDWARE_MAX 255  // ESP32: No hardware limit
+#endif
+
+// =============================================================================
+// POWER LIMITING CONFIGURATION
+// =============================================================================
+
+/**
+ * @brief Current draw per LED color channel at full brightness
+ *
+ * Typical WS2812B draws ~20mA per color channel (R, G, B) at full brightness.
+ * Full white (RGB all 255) = 60mA per LED.
+ */
+#define LED_MA_PER_CHANNEL          20
+
+/**
+ * @brief Maximum current per LED at full white brightness
+ *
+ * 3 channels * 20mA = 60mA per LED
+ */
+#define LED_MA_PER_LED_FULL_WHITE   60
+
+/**
+ * @brief Default power budget from Kconfig (0 = disabled)
+ *
+ * ESP32-C3 custom board: 450mA (TPS61322A boost converter limit ~500mA max output)
+ * ESP32/other: 0 (disabled - assumes adequate external power supply)
+ */
+#ifdef CONFIG_LED_MAX_POWER_MA
+#define LED_DEFAULT_MAX_POWER_MA    CONFIG_LED_MAX_POWER_MA
+#else
+#define LED_DEFAULT_MAX_POWER_MA    0
+#endif
+
+/**
+ * @brief Maximum current increase per frame (slew rate limiting)
+ *
+ * Limits how fast the total LED current can increase between frames.
+ * This prevents voltage sag from sudden current spikes that can cause
+ * brownout resets on battery-powered devices.
+ *
+ * At 67fps (15ms/frame), 150mA/frame allows:
+ * - 0 to 450mA in 3 frames (~45ms) - imperceptible visually
+ * - Candy cane swap (~165mA delta) in ~1 frame (~15ms) - instant
+ *
+ * Only active when power limiting is enabled (LED_DEFAULT_MAX_POWER_MA > 0).
+ */
+#ifdef CONFIG_LED_MAX_SLEW_MA_PER_FRAME
+#define LED_MAX_SLEW_MA_PER_FRAME   CONFIG_LED_MAX_SLEW_MA_PER_FRAME
+#else
+#define LED_MAX_SLEW_MA_PER_FRAME   150
 #endif
 
 // =============================================================================

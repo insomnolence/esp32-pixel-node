@@ -17,9 +17,12 @@ menu "ESP32 LED Mesh Configuration"
         config LED_COUNT
             int "Number of LEDs"
             range 1 1000
+            default 60 if IDF_TARGET_ESP32C3
             default 144
             help
                 Number of LEDs in the strip to control.
+                ESP32-C3: Default 60 (memory and power constraints)
+                ESP32/ESP32-S3: Default 144
 
         config PHYSICAL_LED_STRIP_LENGTH  
             int "Physical LED Strip Length"
@@ -43,6 +46,43 @@ menu "ESP32 LED Mesh Configuration"
             default 4096
             help
                 Stack size for the LED processing task (ESP32 dual-core mode).
+
+        config LED_MAX_POWER_MA
+            int "Maximum LED Power Budget (milliamps)"
+            range 0 5000
+            default 450 if IDF_TARGET_ESP32C3
+            default 0
+            help
+                Maximum current draw allowed for the LED strip in milliamps.
+                Brightness will be automatically scaled down if the calculated
+                power draw exceeds this limit.
+
+                Set to 0 to disable power limiting (and slew rate limiting).
+
+                ESP32-C3 (custom board): Default 450mA (TPS61322A boost converter limit)
+                ESP32/other: Default 0 (disabled - external power supply)
+
+                Typical WS2812B power: ~60mA per LED at full white brightness
+                (20mA per color channel R/G/B).
+
+        config LED_MAX_SLEW_MA_PER_FRAME
+            int "Maximum Current Slew Rate (mA per frame)"
+            range 50 500
+            default 150
+            depends on LED_MAX_POWER_MA != 0
+            help
+                Maximum current increase allowed per frame (slew rate limiting).
+                Prevents voltage sag from sudden current spikes that can cause
+                brownout resets on battery-powered devices.
+
+                At 67fps (15ms/frame), 150mA/frame allows:
+                - 0 to 450mA in 3 frames (~45ms) - imperceptible visually
+                - Typical pattern transitions in 1-2 frames - instant
+
+                Lower values = more protection, slower ramp-up
+                Higher values = less protection, faster transitions
+
+                Only active when LED_MAX_POWER_MA > 0.
 
     endmenu
 

@@ -160,6 +160,10 @@ extern "C" void app_main(void) {
         battery_profile->setBatteryMonitor(&batteryMonitor);
         battery_profile->startPeriodicUpdates(CONFIG_BATTERY_UPDATE_INTERVAL_MS);
         ESP_LOGI(MAIN_TAG, "🔋 Battery service enabled - updates every %ld ms", (long)CONFIG_BATTERY_UPDATE_INTERVAL_MS);
+
+        // Wire battery monitor to LED controller for voltage-aware power limiting
+        ledController.setBatteryMonitor(&batteryMonitor);
+        ESP_LOGI(MAIN_TAG, "🔋 LED voltage-aware power limiting enabled");
     } else {
         ESP_LOGW(MAIN_TAG, "⚠️ Battery monitor initialization failed - service disabled");
     }

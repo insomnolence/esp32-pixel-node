@@ -176,7 +176,10 @@ bool Player::UpdatePattern(led_time_t now, ILedStrip *strip) {
         if (pattern) {
             // Clear strip when switching to new pattern to prevent leftover pixels
             strip->clear();
-            
+
+            // Note: Slew rate limiting in LEDStrip::show() automatically prevents
+            // inrush current spikes - no explicit trigger needed
+
             // Ensure brightness is set BEFORE initializing pattern
             uint8_t brightness = sequence->GetBrightness(step);
             

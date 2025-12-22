@@ -313,6 +313,17 @@ void LEDController::onPatternReceived() {
     lastPatternReceivedTime = esp_timer_get_time() / 1000; // Convert to ms
 }
 
+#ifdef CONFIG_BATTERY_MONITOR_ENABLED
+void LEDController::setBatteryMonitor(BatteryMonitor* monitor) {
+    // Forward to the underlying LEDStrip
+    // Note: strip is ILedStrip*, but we know it's actually a LEDStrip
+    LEDStrip* ledStrip = static_cast<LEDStrip*>(strip);
+    if (ledStrip) {
+        ledStrip->setBatteryMonitor(monitor);
+    }
+}
+#endif
+
 void LEDController::broadcastPattern(const Packet& packet) {
     if (!patternBroadcastCallback) {
         // No callback set - this is fine, not all modes need broadcasting
